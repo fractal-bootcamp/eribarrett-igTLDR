@@ -88,8 +88,15 @@ def instagram_login(current_user):
     username = data.get('username')
     password = data.get('password')
     
+    # Check for either username/password or cookie parameters
+    cookie_auth = data.get('cookie_auth', False)
+    
     if not username or not password:
         return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+    
+    # If this is a cookie auth request, the sessionid and csrftoken should be provided
+    if cookie_auth and (not data.get('sessionid') or not data.get('csrftoken')):
+        return jsonify({'success': False, 'error': 'Missing cookie parameters'}), 400
         
     result = AuthController.instagram_login(username, password, current_user.user_id)
     
