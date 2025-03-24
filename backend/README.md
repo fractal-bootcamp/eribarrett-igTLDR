@@ -1,120 +1,72 @@
-# InstaTLDR Backend
+# Instagram Cookie Validator
 
-Backend service for Instagram monitoring with cookie-based authentication, built with Flask and Python.
+A simple tool to validate Instagram cookies without needing to run a full application server.
 
-## Features
+## What This Tool Does
 
-- Cookie-based Instagram authentication (no password storage)
-- Encrypted storage of Instagram session cookies
-- Periodic monitoring of Instagram posts
-- Post summarization
-- Email and Telegram notifications
-- Rate limiting and security measures
-- REST API for frontend and CLI
+This tool allows you to:
+1. Validate Instagram cookies obtained from your browser
+2. Check if they provide successful authentication to Instagram
+3. View basic profile information when available
+4. Save cookie information to a JSON file for future use
 
-## Setup
+## Getting Started
 
 ### Prerequisites
-
-- Python 3.10+
-- Miniconda (recommended)
+- Python 3.6 or higher
+- Required packages: `requests`
 
 ### Installation
+1. Clone this repository or download the `insta_setup.py` file
+2. Install required packages:
+   ```bash
+   pip install requests
+   ```
 
-1. Create a Conda environment:
+## Usage
 
+Run the script directly:
 ```bash
-conda create -n instatldr python=3.10 -y
-conda activate instatldr
+python insta_setup.py
 ```
 
-2. Install dependencies:
+### What You'll Need
+- Your Instagram username
+- Browser cookies from an authenticated Instagram session:
+  - `sessionid` (required)
+  - `csrftoken` (optional but recommended)
 
-```bash
-pip install -r requirements.txt
-```
+### Getting Instagram Cookies
 
-3. Configure environment variables:
+1. **Log in to Instagram in your web browser**
+   - Go to https://www.instagram.com and log in
 
-Copy `.env.example` to `.env` and edit it with your settings:
+2. **Access your browser cookies**
+   - Open Developer Tools (F12 or right-click → Inspect)
+   - Navigate to:
+     - **Chrome/Edge**: Application tab → Cookies → instagram.com
+     - **Firefox**: Storage tab → Cookies → instagram.com
+     - **Safari**: Storage tab → Cookies
 
-```bash
-cp .env.example .env
-nano .env
-```
+3. **Find these specific cookies**
+   - `sessionid` - Most important cookie, represents your authenticated session
+   - `csrftoken` - Secondary cookie, provides CSRF protection
 
-### Running the Backend
+## How It Works
 
-#### Development mode:
+The script makes a direct API request to Instagram using your cookies to validate authentication. No complex setup is required - it simply tests if your cookies allow access to your Instagram account.
 
-```bash
-flask run --debug
-```
+## Cookie Security and Expiration
 
-#### Production mode:
+- **Security**: Cookies provide direct access to your Instagram account. Keep them secure.
+- **Expiration**: Instagram cookies typically expire after a few weeks.
+- **Refreshing**: When cookies expire, simply log in to Instagram again and get fresh cookies.
 
-```bash
-gunicorn wsgi:app
-```
+## License
 
-## CLI Usage
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-The CLI allows you to manage users and Instagram accounts directly from the command line.
+## Acknowledgments
 
-### Register a new user
-
-```bash
-python cli.py register --username myuser --email user@example.com
-```
-
-### Login a user
-
-```bash
-python cli.py login --username myuser
-```
-
-### Add an Instagram account
-
-```bash
-python cli.py add-instagram --user-id USER_ID --username INSTAGRAM_USERNAME
-```
-
-### List Instagram accounts
-
-```bash
-python cli.py list-accounts --user-id USER_ID
-```
-
-### Delete an Instagram account
-
-```bash
-python cli.py delete-account --account-id ACCOUNT_ID
-```
-
-## API Documentation
-
-The API provides endpoints for the frontend and other clients to interact with the backend.
-
-### Authentication
-
-- `POST /api/auth/register` - Register a new user
-- `POST /api/auth/login` - Login a user
-- `POST /api/auth/instagram` - Add an Instagram account
-
-### Accounts
-
-- `GET /api/accounts` - Get all Instagram accounts for the current user
-- `GET /api/accounts/{account_id}` - Get a specific Instagram account
-- `DELETE /api/accounts/{account_id}` - Delete an Instagram account
-- `POST /api/accounts/{account_id}/check` - Check an account for new posts immediately
-
-### Settings
-
-- `GET /api/settings` - Get notification settings for the current user
-- `PUT /api/settings` - Update notification settings
-
-### Monitor
-
-- `GET /api/monitor/status` - Get status of the monitoring service
-- `POST /api/monitor/start` - Start the monitoring service
-- `POST /api/monitor/stop` - Stop the monitoring service 
+- This tool is intended for educational purposes only
+- Use responsibly and respect Instagram's terms of service 
