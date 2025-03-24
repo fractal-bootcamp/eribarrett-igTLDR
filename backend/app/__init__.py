@@ -1,6 +1,6 @@
 import os
 import logging
-from flask import Flask
+from flask import Flask, current_app
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -42,10 +42,21 @@ def create_app():
     # Register blueprints
     app.register_blueprint(api, url_prefix='/api')
     
-    # Start the Instagram monitor in the background
-    @app.before_first_request
-    def start_monitor():
-        instagram_monitor.start()
+    # Start the Instagram monitor when first request is received
+    # Using Flask 2.x compatible approach
+    @app.route('/start-monitor', methods=['GET'])
+    @limiter.exempt
+    def start_monitor_route():
+        if not instagram_monitor.is_running():
+            instagram_monitor.start()
+            logger.info("Instagram monitor started via route")
+        return {'status': 'monitor started'}, 200
+    
+    # Manually start monitor during app init in non-testing environments
+    if not app.config['TESTING']:
+        with app.app_context():
+            instagram_monitor.start()
+            logger.info("Instagram monitor started during app initialization")
     
     # Shutdown the Instagram monitor when the app is stopping
     @app.teardown_appcontext

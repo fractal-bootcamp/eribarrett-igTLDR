@@ -3,7 +3,7 @@ import jwt
 from functools import wraps
 from config import get_config
 from models import User, InstagramAccount, NotificationSettings
-from controllers import AuthController, instagram_monitor
+from controllers import AuthController, instagram_monitor, InstagramClient
 
 api = Blueprint('api', __name__)
 config = get_config()
@@ -179,22 +179,85 @@ def check_account(current_user, account_id):
         'message': 'Account checked' if result else 'Failed to check account'
     }), 200 if result else 500
 
-# Settings routes
-@api.route('/settings', methods=['GET'])
+# Dashboard routes
+@api.route('/dashboard/stats', methods=['GET'])
 @token_required
-def get_settings(current_user):
-    """Get notification settings for the current user."""
+def get_dashboard_stats(current_user):
+    """Get Instagram account statistics for the dashboard."""
+    accounts = InstagramAccount.find_by_user(current_user.user_id)
+    
+    if not accounts:
+        return jsonify({
+            'success': True,
+            'stats': [],
+            'message': 'No Instagram accounts found'
+        }), 200
+    
+    stats = []
+    for account in accounts:
+        if not account.active:
+            continue
+            
+        # Get account stats
+        client = InstagramClient(account.get_cookies())
+        if not client.validate_session():
+            stats.append({
+                'account_id': account.account_id,
+                'username': account.username,
+                'status': 'error',
+                'error': 'Session expired'
+            })
+            continue
+            
+        user_info = client.get_user_info(account.username)
+        if not user_info.get('success'):
+            stats.append({
+                'account_id': account.account_id,
+                'username': account.username,
+                'status': 'error',
+                'error': user_info.get('error', 'Failed to get user info')
+            })
+            continue
+            
+        # Add account stats
+        stats.append({
+            'account_id': account.account_id,
+            'username': account.username,
+            'status': 'active',
+            'last_check': account.last_check,
+            'follower_count': user_info['user']['follower_count'],
+            'following_count': user_info['user']['following_count'],
+            'media_count': user_info['user']['media_count'],
+            'profile_pic_url': user_info['user']['profile_pic_url']
+        })
+    
+    return jsonify({
+        'success': True,
+        'stats': stats
+    }), 200
+
+# Preferences routes
+@api.route('/preferences', methods=['GET'])
+@token_required
+def get_preferences(current_user):
+    """Get notification preferences for the current user."""
     settings = NotificationSettings.find_by_user(current_user.user_id)
     
     return jsonify({
         'success': True,
-        'settings': settings.to_dict()
+        'preferences': {
+            'email_enabled': settings.email_enabled,
+            'telegram_enabled': settings.telegram_enabled,
+            'check_interval': settings.check_interval,
+            'summary_length': settings.summary_length,
+            'include_images': settings.include_images
+        }
     }), 200
 
-@api.route('/settings', methods=['PUT'])
+@api.route('/preferences', methods=['POST'])
 @token_required
-def update_settings(current_user):
-    """Update notification settings."""
+def update_preferences(current_user):
+    """Update notification preferences."""
     data = request.get_json()
     settings = NotificationSettings.find_by_user(current_user.user_id)
     
@@ -220,10 +283,59 @@ def update_settings(current_user):
     
     return jsonify({
         'success': True,
-        'settings': settings.to_dict()
+        'preferences': {
+            'email_enabled': settings.email_enabled,
+            'telegram_enabled': settings.telegram_enabled,
+            'check_interval': settings.check_interval,
+            'summary_length': settings.summary_length,
+            'include_images': settings.include_images
+        }
     }), 200
 
 # Monitor routes
+@api.route('/monitor/manual-check', methods=['POST'])
+@token_required
+def manual_check(current_user):
+    """Manually check all accounts for new posts."""
+    data = request.get_json()
+    account_id = data.get('account_id')
+    
+    if account_id:
+        # Check specific account
+        account = InstagramAccount.find_by_id(account_id)
+        
+        if not account:
+            return jsonify({'success': False, 'error': 'Account not found'}), 404
+            
+        # Check if the account belongs to the current user
+        if account.user_id != current_user.user_id:
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+            
+        result = instagram_monitor.check_now(account_id)
+            
+        return jsonify({
+            'success': result,
+            'message': 'Account checked' if result else 'Failed to check account'
+        }), 200 if result else 500
+    else:
+        # Check all accounts
+        accounts = InstagramAccount.find_by_user(current_user.user_id)
+        results = []
+        
+        for account in accounts:
+            if account.active:
+                success = instagram_monitor.check_now(account.account_id)
+                results.append({
+                    'account_id': account.account_id,
+                    'username': account.username,
+                    'success': success
+                })
+        
+        return jsonify({
+            'success': True,
+            'results': results
+        }), 200
+
 @api.route('/monitor/status', methods=['GET'])
 @token_required
 def monitor_status(current_user):
