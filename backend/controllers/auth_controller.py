@@ -112,40 +112,19 @@ class AuthController:
                     'success': False,
                     'error': 'User not found'
                 }
-            
-            # Check if this is a cookie-based auth request
-            cookie_auth = False
-            cookies = None
-
-            if '|' in password and username == 'instagram':
-                cookie_auth = True
-                sessionid, csrftoken = password.split('|', 1)
-                # Create a dictionary similar to what instagrapi expects
-                cookies = {
-                    'sessionid': sessionid,
-                    'csrftoken': csrftoken
-                }
-                # Update username to be more descriptive
-                username = f"instagram_cookie_auth_{user.username}"
-            
-            if cookie_auth:
-                # Direct login with cookies
-                client = InstagramClient()
-                result = {'success': client.login_by_cookies(cookies)}
-            else:
-                # Login to Instagram with username and password
-                client = InstagramClient()
-                result = client.login_by_username_password(username, password)
+                
+            # Login to Instagram
+            client = InstagramClient()
+            result = client.login_by_username_password(username, password)
             
             if not result.get('success'):
                 return {
                     'success': False,
                     'error': result.get('error', 'Instagram login failed')
                 }
-            
-            # Get cookies from result if not cookie auth
-            if not cookie_auth:
-                cookies = result.get('cookies')
+                
+            # Get cookies from result
+            cookies = result.get('cookies')
             
             # Store encrypted cookies
             existing_account = InstagramAccount.find_by_username(username, user_id)
