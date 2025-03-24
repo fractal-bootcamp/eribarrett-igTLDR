@@ -1,131 +1,69 @@
-# Testing with Instagram Credentials
+# Instagram Cookie Authentication
 
-This guide explains how to test the InstaTLDR application with your own Instagram credentials.
+This guide explains how to test Instagram connectivity using browser cookies, with no need to run the full InstaTLDR application.
 
-## Setup
+## What You Need
 
-1. Make sure you have installed all the required dependencies:
-```bash
-pip install -r requirements.txt
-```
+To authenticate with Instagram, you'll need:
+- Your Instagram username
+- Browser cookies from an authenticated Instagram session
 
-2. Configure your environment variables in the `.env` file. The following variables are required:
-```
-FLASK_ENV=development
-SECRET_KEY=your-secret-key
-ENCRYPTION_KEY=your-encryption-key
-JWT_SECRET_KEY=your-jwt-secret
-JWT_ACCESS_TOKEN_EXPIRES=86400
-```
+## Getting Instagram Cookies
 
-3. Start the Flask application:
-```bash
-export FLASK_APP=app
-export FLASK_ENV=development
-python -m flask run --host=0.0.0.0 --port=5000
-```
+Follow these steps to obtain your Instagram cookies:
 
-## Testing with the Script
+1. **Log in to Instagram in your web browser**
+   - Go to https://www.instagram.com and log in
 
-We've provided a test script `test_instagram.py` to help you test the application with your Instagram credentials. The script allows you to:
-
-1. Register a new user account
-2. Login with an existing account
-3. Add an Instagram account using username/password
-4. Add an Instagram account using browser cookies
-5. List all your Instagram accounts
-
-### Using Username/Password
-
-This method uses Instagram's API directly for authentication:
-
-```bash
-python test_instagram.py
-```
-
-Follow the prompts to register/login and then add your Instagram credentials.
-
-### Using Browser Cookies (Recommended)
-
-This method is more reliable as it bypasses potential Instagram API limitations:
-
-1. Login to Instagram in your web browser
-2. Use browser developer tools to get your cookies:
+2. **Access your browser cookies**
    - Open Developer Tools (F12 or right-click → Inspect)
-   - Go to Application tab → Cookies → instagram.com
-   - Find and copy the values for `sessionid` and `csrftoken`
+   - Navigate to:
+     - **Chrome/Edge**: Application tab → Cookies → instagram.com
+     - **Firefox**: Storage tab → Cookies → instagram.com
+     - **Safari**: Storage tab → Cookies
 
-3. Run the test script and choose the "Add Instagram account (with cookies)" option:
+3. **Find these specific cookies**
+   - `sessionid` - Most important cookie, represents your authenticated session
+   - `csrftoken` - Secondary cookie, provides CSRF protection
+
+4. **Copy the values**
+   - Double-click the Value column for each cookie
+   - Copy the full text (it may be quite long)
+
+## Testing Instagram Cookies
+
+We've provided a simple standalone script to test your Instagram cookies without needing to run the full application:
+
 ```bash
-python test_instagram.py
+python insta_setup.py
 ```
 
-## Manual Testing with API Endpoints
+This script will:
+1. Ask for your Instagram username
+2. Ask for your sessionid and csrftoken cookies
+3. Test if the cookies are valid by making a direct request to Instagram
+4. Display your basic profile information if successful
+5. Save the cookies to a JSON file for future reference
 
-If you prefer to test manually using API calls, here are the key endpoints:
+## Cookie Security and Expiration
 
-### Authentication
+- **Security**: Cookies provide direct access to your Instagram account. Keep them secure.
+- **Expiration**: Instagram cookies typically expire after a few weeks.
+- **Refreshing**: When cookies expire, simply log in to Instagram again and get fresh cookies.
 
-- Register: `POST /api/auth/register`
-  ```json
-  {
-    "email": "your-email@example.com",
-    "password": "your-password",
-    "name": "Your Name"
-  }
-  ```
+## What's Next?
 
-- Login: `POST /api/auth/login`
-  ```json
-  {
-    "email": "your-email@example.com",
-    "password": "your-password"
-  }
-  ```
+Once you've verified your cookies work with `insta_setup.py`, you can:
 
-### Instagram Accounts
+1. Use the saved cookie JSON file as a reference
+2. See your basic profile information
+3. Build applications that interact with Instagram using these cookies
 
-- Add Account: `POST /api/instagram/accounts`
-  ```json
-  {
-    "username": "your_instagram_username",
-    "password": "your_instagram_password",
-    "via_browser": false
-  }
-  ```
-
-- Or with cookies:
-  ```json
-  {
-    "username": "your_instagram_username",
-    "cookies": {
-      "sessionid": "your-session-id",
-      "csrftoken": "your-csrf-token"
-    },
-    "via_browser": true
-  }
-  ```
-
-- List Accounts: `GET /api/instagram/accounts`
-
-- Check Account: `POST /api/monitor/manual-check`
-  ```json
-  {
-    "account_id": "your-account-id" 
-  }
-  ```
-
-All endpoints except registration and login require an Authorization header:
-```
-Authorization: Bearer your-jwt-token
-```
+This standalone approach lets you test Instagram connectivity without needing to run the full InstaTLDR application with Flask.
 
 ## Troubleshooting
 
-- **Login Failures**: Instagram may block login attempts. Using cookies is often more reliable.
-- **Rate Limiting**: Instagram might rate-limit frequent requests. The application has built-in rate limiting to help mitigate this.
-- **Session Expiration**: Instagram sessions expire. You may need to refresh your cookies periodically.
-
-## Security Note
-
-Your Instagram credentials are encrypted before being stored in the database. The encryption key is defined in your `.env` file. 
+If your cookies don't work:
+- Make sure you're still logged in to Instagram in your browser
+- Try logging out and back in to get fresh cookies
+- Check if you've copied the complete cookie values 
