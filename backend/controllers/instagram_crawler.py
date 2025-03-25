@@ -4,33 +4,24 @@ import logging
 from instagrapi import Client
 from instagrapi.exceptions import LoginRequired, ClientError, ClientLoginRequired
 from typing import Dict, List, Optional, Union
-import requests
-import socket
-import subprocess
 
 logger = logging.getLogger(__name__)
 
 class InstagramCrawler:
     """
-    Instagram crawler that uses existing session cookies and routes requests
-    through the user's real IP address in a containerized environment.
+    Instagram crawler that uses existing session cookies for authentication.
     """
     
-    def __init__(self, session_cookies: Dict = None, user_ip: str = None):
+    def __init__(self, session_cookies: Dict = None):
         """
         Initialize the Instagram crawler with session cookies.
         
         Args:
             session_cookies (Dict): Dictionary containing session cookies from Instagram
-            user_ip (str): User's real IP address to route requests through
         """
         self.logger = self._setup_logger()
         self.client = Client()
         
-        # Set user's IP if provided
-        if user_ip:
-            self.set_user_ip(user_ip)
-            
         # Set session cookies if provided
         if session_cookies:
             self.set_session_cookies(session_cookies)
@@ -52,86 +43,6 @@ class InstagramCrawler:
         logger.addHandler(c_handler)
         
         return logger
-    
-    def set_user_ip(self, user_ip: str) -> bool:
-        """
-        Set the user's real IP address for routing requests in a container.
-        
-        Args:
-            user_ip (str): User's real IP address
-            
-        Returns:
-            bool: True if IP was set successfully, False otherwise
-        """
-        try:
-            # Configure network namespace for the container
-            self._setup_network_namespace(user_ip)
-            
-            # Test the connection
-            self.logger.info(f"Testing connection with user IP {user_ip}...")
-            response = requests.get("https://api.ipify.org")
-            if response.status_code == 200:
-                self.logger.info(f"Successfully set user IP: {response.text}")
-                return True
-            else:
-                self.logger.error(f"Failed to verify user IP: {response.status_code}")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"Failed to set user IP: {e}")
-            return False
-    
-    def _setup_network_namespace(self, user_ip: str):
-        """
-        Set up network namespace for the container to use the user's IP.
-        
-        Args:
-            user_ip (str): User's real IP address
-        """
-        try:
-            # Create a new network namespace
-            namespace = f"ns_{user_ip.replace('.', '_')}"
-            subprocess.run(["ip", "netns", "add", namespace], check=True)
-            
-            # Create a virtual interface
-            veth_name = f"veth_{namespace}"
-            subprocess.run(["ip", "link", "add", veth_name, "type", "veth", "peer", "name", f"{veth_name}_peer"], check=True)
-            
-            # Move the peer interface to the namespace
-            subprocess.run(["ip", "link", "set", f"{veth_name}_peer", "netns", namespace], check=True)
-            
-            # Configure IP address in the namespace
-            subprocess.run(["ip", "netns", "exec", namespace, "ip", "addr", "add", f"{user_ip}/32", "dev", f"{veth_name}_peer"], check=True)
-            subprocess.run(["ip", "netns", "exec", namespace, "ip", "link", "set", f"{veth_name}_peer", "up"], check=True)
-            
-            # Configure the main interface
-            subprocess.run(["ip", "link", "set", veth_name, "up"], check=True)
-            
-            # Set up routing in the namespace
-            subprocess.run(["ip", "netns", "exec", namespace, "ip", "route", "add", "default", "via", "127.0.0.1"], check=True)
-            
-            # Store namespace for cleanup
-            self.namespace = namespace
-            self.veth_name = veth_name
-            
-        except Exception as e:
-            self.logger.error(f"Failed to setup network namespace: {e}")
-            self._cleanup_network_namespace()
-            raise
-    
-    def _cleanup_network_namespace(self):
-        """Clean up network namespace and interfaces."""
-        try:
-            if hasattr(self, 'namespace'):
-                # Delete the namespace and its interfaces
-                subprocess.run(["ip", "netns", "delete", self.namespace], check=True)
-                subprocess.run(["ip", "link", "delete", self.veth_name], check=True)
-        except Exception as e:
-            self.logger.error(f"Failed to cleanup network namespace: {e}")
-    
-    def __del__(self):
-        """Cleanup when the crawler is destroyed."""
-        self._cleanup_network_namespace()
     
     def set_session_cookies(self, cookies: Dict) -> bool:
         """

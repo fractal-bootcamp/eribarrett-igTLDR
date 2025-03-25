@@ -4,108 +4,143 @@ import uuid
 import datetime
 from utils import encrypt_data, decrypt_data
 from typing import Dict, List, Optional
+from controllers.instagram_crawler import InstagramCrawler
 
 ACCOUNTS_FILE = 'instagram_accounts.json'
 
 class InstagramAccount:
-    """Instagram account model for storing encrypted session cookies."""
+    """Model for Instagram account data."""
     
-    def __init__(self, account_id: str, user_id: str, username: str, user_ip: str, cookies: Dict = None, active: bool = True, last_check: datetime = None, created_at: datetime = None):
-        self.account_id = account_id
-        self.user_id = user_id
+    def __init__(self, username: str, user_id: str, session_cookies: Dict = None):
         self.username = username
-        self.user_ip = user_ip  # Store user's IP address
-        self.cookies = cookies or {}
-        self.active = active
-        self.last_check = last_check or datetime.datetime.utcnow()
-        self.created_at = created_at or datetime.datetime.utcnow()
+        self.user_id = user_id
+        self.session_cookies = session_cookies or {}
+        self.last_check = None
+        self.crawler = InstagramCrawler(session_cookies=session_cookies)
     
     @classmethod
-    def get_accounts(cls):
-        """Load all accounts from the file."""
-        if not os.path.exists(ACCOUNTS_FILE):
-            return []
-            
-        with open(ACCOUNTS_FILE, 'r') as f:
-            try:
-                accounts_data = json.load(f)
-                return [cls(**account_data) for account_data in accounts_data]
-            except json.JSONDecodeError:
-                return []
-    
-    @classmethod
-    def save_accounts(cls, accounts):
-        """Save all accounts to the file."""
-        accounts_data = [account.to_dict() for account in accounts]
-        with open(ACCOUNTS_FILE, 'w') as f:
-            json.dump(accounts_data, f, indent=2)
-    
-    @classmethod
-    def find_by_id(cls, account_id: str) -> Optional['InstagramAccount']:
-        """Find an Instagram account by ID."""
-        accounts = cls.get_accounts()
-        return next((acc for acc in accounts if acc.account_id == account_id), None)
+    def create(cls, username: str, user_id: str, session_cookies: Dict = None) -> 'InstagramAccount':
+        """Create a new Instagram account."""
+        account = cls(username, user_id, session_cookies)
+        account.save()
+        return account
     
     @classmethod
     def find_by_username(cls, username: str) -> Optional['InstagramAccount']:
         """Find an Instagram account by username."""
-        accounts = cls.get_accounts()
-        return next((acc for acc in accounts if acc.username == username), None)
+        data = cls._load_data()
+        account_data = data.get(username)
+        if account_data:
+            account = cls(
+                username=account_data['username'],
+                user_id=account_data['user_id'],
+                session_cookies=account_data.get('session_cookies', {})
+            )
+            account.last_check = account_data.get('last_check')
+            return account
+        return None
     
     @classmethod
     def find_by_user(cls, user_id: str) -> List['InstagramAccount']:
         """Find all Instagram accounts for a user."""
-        accounts = cls.get_accounts()
-        return [acc for acc in accounts if acc.user_id == user_id]
+        data = cls._load_data()
+        return [
+            cls(
+                username=account_data['username'],
+                user_id=account_data['user_id'],
+                session_cookies=account_data.get('session_cookies', {})
+            )
+            for account_data in data.values()
+            if account_data['user_id'] == user_id
+        ]
     
-    def save(self):
-        """Save the Instagram account data."""
-        accounts = self.get_accounts()
-        
-        # Update existing account or add new one
-        found = False
-        for i, acc in enumerate(accounts):
-            if acc.account_id == self.account_id:
-                accounts[i] = self
-                found = True
-                break
-        
-        if not found:
-            accounts.append(self)
-        
-        # Save to file
-        self.save_accounts(accounts)
-        return True
+    def update_session_cookies(self, cookies: Dict):
+        """Update session cookies for the account."""
+        self.session_cookies = cookies
+        self.crawler = InstagramCrawler(session_cookies=cookies)
+        self.save()
+    
+    def get_latest_posts(self, since_time: Optional[str] = None) -> Dict:
+        """Get latest posts from the account."""
+        try:
+            # Validate session
+            if not self.crawler.validate_session():
+                return {
+                    'success': False,
+                    'error': 'Invalid session'
+                }
+            
+            # Get posts
+            result = self.crawler.get_latest_posts(self.username, since_time)
+            
+            if result['success']:
+                self.last_check = datetime.now().isoformat()
+                self.save()
+            
+            return result
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def get_user_info(self) -> Dict:
+        """Get user information."""
+        try:
+            # Validate session
+            if not self.crawler.validate_session():
+                return {
+                    'success': False,
+                    'error': 'Invalid session'
+                }
+            
+            return self.crawler.get_user_info(self.username)
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
     
     def delete(self):
         """Delete the Instagram account."""
-        accounts = self.get_accounts()
-        accounts = [acc for acc in accounts if acc.account_id != self.account_id]
-        self.save_accounts(accounts)
-        return True
+        data = self._load_data()
+        if self.username in data:
+            del data[self.username]
+            self._save_data(data)
+    
+    def save(self):
+        """Save the Instagram account data."""
+        data = self._load_data()
+        data[self.username] = {
+            'username': self.username,
+            'user_id': self.user_id,
+            'session_cookies': self.session_cookies,
+            'last_check': self.last_check
+        }
+        self._save_data(data)
     
     def to_dict(self) -> Dict:
-        """Convert the account to a dictionary."""
+        """Convert account to dictionary."""
         return {
-            'account_id': self.account_id,
-            'user_id': self.user_id,
             'username': self.username,
-            'user_ip': self.user_ip,
-            'active': self.active,
-            'last_check': self.last_check.isoformat() if self.last_check else None,
-            'created_at': self.created_at.isoformat() if self.created_at else None
+            'user_id': self.user_id,
+            'last_check': self.last_check
         }
     
-    def get_cookies(self) -> Dict:
-        """Get the account's cookies."""
-        return self.cookies
+    @staticmethod
+    def _load_data() -> Dict:
+        """Load Instagram account data from file."""
+        data_file = 'data/instagram_accounts.json'
+        if os.path.exists(data_file):
+            with open(data_file, 'r') as f:
+                return json.load(f)
+        return {}
     
-    def update_cookies(self, cookies):
-        """Encrypt and update the session cookies."""
-        self.cookies = cookies
-        return self.save()
-    
-    def update_last_check(self):
-        """Update the last check timestamp."""
-        self.last_check = datetime.datetime.utcnow()
-        return self.save() 
+    @staticmethod
+    def _save_data(data: Dict):
+        """Save Instagram account data to file."""
+        os.makedirs('data', exist_ok=True)
+        with open('data/instagram_accounts.json', 'w') as f:
+            json.dump(data, f, indent=2) 
