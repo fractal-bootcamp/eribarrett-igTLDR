@@ -325,19 +325,21 @@ export function CalendarView() {
       <div className="md:col-span-1">
         <Card className="overflow-hidden">
           <CardContent className="p-4">
-            <Calendar
-              mode="single"
-              selected={date}
-              onSelect={handleDateSelect}
-              className="rounded-md"
-              modifiers={{
-                event: (date) => isDateWithEvent(date),
-              }}
-              modifiersClassNames={{
-                event:
-                  "font-bold relative before:absolute before:top-0 before:right-0 before:h-2 before:w-2 before:rounded-full before:bg-primary",
-              }}
-            />
+            <div className="flex justify-center">
+              <Calendar
+                mode="single"
+                selected={date}
+                onSelect={handleDateSelect}
+                className="rounded-md"
+                modifiers={{
+                  event: (date) => isDateWithEvent(date),
+                }}
+                modifiersClassNames={{
+                  event:
+                    "font-bold relative before:absolute before:top-0 before:right-0 before:h-2 before:w-2 before:rounded-full before:bg-primary",
+                }}
+              />
+            </div>
 
             {selectedDayEvents.length > 0 && (
               <div className="mt-4 border-t pt-4">
