@@ -4,6 +4,19 @@ Unit tests for utilities module.
 import os
 import pytest
 from utils import encrypt_data, decrypt_data
+from config import get_config
+from tests.test_config import TestingConfig
+
+@pytest.fixture(autouse=True)
+def setup_test_env():
+    """Setup test environment."""
+    config = get_config()
+    config.__class__ = TestingConfig
+    yield
+    # Cleanup after tests
+    if hasattr(config, 'DATA_DIR') and os.path.exists(config.DATA_DIR):
+        for file in os.listdir(config.DATA_DIR):
+            os.remove(os.path.join(config.DATA_DIR, file))
 
 class TestEncryption:
     """Tests for encryption and decryption utilities."""

@@ -1,11 +1,11 @@
-from flask import request, jsonify, Blueprint
+from flask import request, jsonify, Blueprint, current_app
 import jwt
 from functools import wraps
 from config import get_config
-from models import User, InstagramAccount, NotificationSettings
-from controllers import AuthController, instagram_monitor
+from models import User, InstagramAccount
+from controllers import AuthController
 from controllers.instagram_crawler import InstagramCrawler
-from controllers.instagram_monitor import InstagramMonitor
+from controllers.instagram_monitor import instagram_monitor
 import logging
 
 logger = logging.getLogger(__name__)
@@ -54,13 +54,15 @@ def require_auth(f):
             return jsonify({'error': 'No authorization header'}), 401
         
         try:
-            user_id = AuthController.validate_token(auth_header)
-            if not user_id:
+            token = auth_header.split(' ')[1]
+            current_user = User.get_by_token(token)
+            if not current_user:
                 return jsonify({'error': 'Invalid token'}), 401
-            return f(*args, **kwargs)
+            return f(current_user, *args, **kwargs)
         except Exception as e:
             logger.error(f"Auth error: {str(e)}")
             return jsonify({'error': 'Authentication failed'}), 401
+            
     return decorated
 
 # Auth routes
@@ -81,57 +83,37 @@ def logout():
 
 @api.route('/auth/me', methods=['GET'])
 @require_auth
-def get_current_user():
+def get_current_user(current_user):
     """Get current user information."""
-    user = AuthController.get_current_user()
     return jsonify({
-        'id': user.user_id,
-        'username': user.username,
-        'email': user.email
+        'id': current_user.user_id,
+        'username': current_user.username,
+        'email': current_user.email
     })
 
 @api.route('/auth/instagram', methods=['POST'])
 def instagram_login():
-    """Login with Instagram credentials and get session cookies."""
+    """Login with Instagram credentials."""
     try:
         data = request.get_json()
-        if not data or 'username' not in data or 'password' not in data:
-            return jsonify({'error': 'Missing username or password'}), 400
+        username = data.get('username')
+        user_ip = data.get('user_ip')
         
-        username = data['username']
-        password = data['password']
-        
-        # Create Instagram client and login
-        client = AuthController.instagram_login(username, password)
-        if not client:
-            return jsonify({'error': 'Failed to login to Instagram'}), 401
-        
-        # Get session cookies
-        cookies = client.cookie_dict
-        
-        # Create or update user
+        if not username or not user_ip:
+            return jsonify({'error': 'Username and user IP are required'}), 400
+            
+        # Create or get user
         user = User.find_by_username(username)
         if not user:
-            user = User.create(username=username)
+            user = User(username=username)
+            user.save()
         
-        # Create or update Instagram account
-        account = InstagramAccount.find_by_username(username)
+        # Add Instagram account
+        account = instagram_monitor.add_account(user.user_id, username, user_ip)
         if not account:
-            account = InstagramAccount.create(
-                username=username,
-                user_id=user.user_id,
-                session_cookies=cookies
-            )
-        else:
-            account.update_session_cookies(cookies)
-        
-        return jsonify({
-            'success': True,
-            'user': {
-                'user_id': user.user_id,
-                'username': user.username
-            }
-        })
+            return jsonify({'error': 'Failed to add Instagram account'}), 500
+            
+        return jsonify(account), 200
         
     except Exception as e:
         logger.error(f"Instagram login error: {str(e)}")
@@ -144,44 +126,32 @@ def get_user():
 # Account routes
 @api.route('/accounts', methods=['GET'])
 @require_auth
-def get_accounts():
+def get_accounts(current_user):
     """Get all Instagram accounts for the current user."""
     try:
-        accounts = InstagramAccount.find_by_user(current_user.user_id)
-        return jsonify({
-            'success': True,
-            'accounts': [account.to_dict() for account in accounts]
-        })
+        accounts = instagram_monitor.get_accounts(current_user.user_id)
+        return jsonify(accounts), 200
     except Exception as e:
         logger.error(f"Get accounts error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @api.route('/accounts', methods=['POST'])
 @require_auth
-def add_account():
+def add_account(current_user):
     """Add a new Instagram account to monitor."""
     try:
         data = request.get_json()
-        if not data or 'username' not in data:
-            return jsonify({'error': 'Missing username'}), 400
+        username = data.get('username')
+        user_ip = data.get('user_ip')
         
-        username = data['username']
-        
-        # Check if account already exists
-        existing_account = InstagramAccount.find_by_username(username)
-        if existing_account:
-            return jsonify({'error': 'Account already exists'}), 400
-        
-        # Create new account
-        account = InstagramAccount.create(
-            username=username,
-            user_id=current_user.user_id
-        )
-        
-        return jsonify({
-            'success': True,
-            'account': account.to_dict()
-        })
+        if not username or not user_ip:
+            return jsonify({'error': 'Username and user IP are required'}), 400
+            
+        account = instagram_monitor.add_account(current_user.user_id, username, user_ip)
+        if not account:
+            return jsonify({'error': 'Failed to add Instagram account'}), 500
+            
+        return jsonify(account), 201
         
     except Exception as e:
         logger.error(f"Add account error: {str(e)}")
@@ -189,46 +159,31 @@ def add_account():
 
 @api.route('/accounts/<username>', methods=['DELETE'])
 @require_auth
-def delete_account(username):
+def delete_account(current_user, username):
     """Delete an Instagram account."""
     try:
-        account = InstagramAccount.find_by_username(username)
-        if not account:
-            return jsonify({'error': 'Account not found'}), 404
-        
-        if account.user_id != current_user.user_id:
-            return jsonify({'error': 'Unauthorized'}), 403
-        
-        account.delete()
-        return jsonify({'success': True})
-        
+        if instagram_monitor.remove_account(current_user.user_id, username):
+            return '', 204
+        return jsonify({'error': 'Account not found'}), 404
     except Exception as e:
         logger.error(f"Delete account error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @api.route('/accounts/<username>/posts', methods=['GET'])
 @require_auth
-def get_account_posts(username):
+def get_latest_posts(current_user, username):
     """Get latest posts from an Instagram account."""
     try:
         account = InstagramAccount.find_by_username(username)
-        if not account:
+        if not account or account.user_id != current_user.user_id:
             return jsonify({'error': 'Account not found'}), 404
-        
-        if account.user_id != current_user.user_id:
-            return jsonify({'error': 'Unauthorized'}), 403
-        
-        # Get posts since last check
-        since_time = request.args.get('since')
-        result = account.get_latest_posts(since_time)
-        
-        if result['success']:
-            return jsonify(result)
-        else:
-            return jsonify({'error': result['error']}), 500
             
+        if instagram_monitor.check_now(account.id):
+            return jsonify({'status': 'success'}), 200
+        return jsonify({'error': 'Failed to check for new posts'}), 500
+        
     except Exception as e:
-        logger.error(f"Get account posts error: {str(e)}")
+        logger.error(f"Get latest posts error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 # Dashboard routes
@@ -236,7 +191,7 @@ def get_account_posts(username):
 def get_dashboard_stats():
     """Get Instagram account statistics for the dashboard."""
     user = get_user()
-    accounts = InstagramAccount.find_by_user(user.user_id)
+    accounts = instagram_monitor.get_accounts(user.user_id)
     
     if not accounts:
         return jsonify({
@@ -291,20 +246,19 @@ def get_dashboard_stats():
 # Monitor routes
 @api.route('/monitor/manual-check', methods=['POST'])
 @require_auth
-def manual_check():
+def manual_check(current_user):
     """Manually check all accounts for new posts."""
     data = request.get_json()
     account_id = data.get('account_id')
-    user = AuthController.get_current_user()
     
     if account_id:
         # Check specific account
-        account = InstagramAccount.find_by_id(account_id)
+        account = instagram_monitor.get_account(current_user.user_id, account_id)
         
         if not account:
             return jsonify({'error': 'Account not found'}), 404
             
-        result = instagram_monitor.check_now(account_id)
+        result = instagram_monitor.check_now(account.account_id)
             
         return jsonify({
             'success': result,
@@ -312,7 +266,7 @@ def manual_check():
         }), 200 if result else 500
     else:
         # Check all accounts
-        accounts = InstagramAccount.find_by_user(user.user_id)
+        accounts = instagram_monitor.get_accounts(current_user.user_id)
         results = []
         
         for account in accounts:

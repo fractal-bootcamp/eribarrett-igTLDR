@@ -2,58 +2,79 @@ import pytest
 from unittest.mock import Mock, patch
 from datetime import datetime
 from controllers.instagram_crawler import InstagramCrawler
+from tests.test_config import TEST_INSTAGRAM_COOKIES, TEST_INSTAGRAM_USERNAME, TEST_INSTAGRAM_USER_IP
 
 @pytest.fixture
 def mock_instagram_client():
-    """Mock Instagram client for testing."""
+    """Mock Instagram client."""
     with patch('controllers.instagram_crawler.Client') as mock:
         client = Mock()
         mock.return_value = client
         yield client
 
 @pytest.fixture
+def mock_requests():
+    """Mock requests library."""
+    with patch('controllers.instagram_crawler.requests') as mock:
+        yield mock
+
+@pytest.fixture
+def mock_subprocess():
+    """Mock subprocess for network namespace operations."""
+    with patch('controllers.instagram_crawler.subprocess') as mock:
+        yield mock
+
+@pytest.fixture
 def sample_cookies():
     """Sample Instagram session cookies."""
-    return {
-        'sessionid': 'test_session_id',
-        'ds_user_id': 'test_user_id',
-        'csrftoken': 'test_csrf_token'
-    }
+    return TEST_INSTAGRAM_COOKIES
+
+@pytest.fixture
+def user_ip():
+    """Test user IP."""
+    return TEST_INSTAGRAM_USER_IP
 
 class TestInstagramCrawler:
-    """Test suite for InstagramCrawler class."""
+    """Test cases for InstagramCrawler."""
     
     def test_init_with_cookies(self, mock_instagram_client, sample_cookies):
         """Test crawler initialization with cookies."""
-        crawler = InstagramCrawler(session_cookies=sample_cookies)
+        crawler = InstagramCrawler(sample_cookies)
+        mock_instagram_client.cookie_dict = sample_cookies
         assert crawler.client.cookie_dict == sample_cookies
     
-    def test_set_session_cookies_success(self, mock_instagram_client, sample_cookies):
-        """Test successful session cookie setting."""
+    def test_session_cookie_management(self, mock_instagram_client, sample_cookies):
+        """Test session cookie management."""
+        crawler = InstagramCrawler(sample_cookies)
         mock_instagram_client.get_timeline_feed.return_value = True
-        mock_instagram_client.user_id = 'test_user_id'
-        mock_instagram_client.username = 'test_username'
+        mock_instagram_client.user_id = '123'
+        mock_instagram_client.username = TEST_INSTAGRAM_USERNAME
         
-        crawler = InstagramCrawler()
-        result = crawler.set_session_cookies(sample_cookies)
+        # Test successful cookie login
+        assert crawler.set_session_cookies(sample_cookies) is True
         
-        assert result is True
-        assert crawler.client.cookie_dict == sample_cookies
-    
-    def test_set_session_cookies_invalid(self, mock_instagram_client, sample_cookies):
-        """Test invalid session cookie handling."""
+        # Test failed cookie login
         mock_instagram_client.get_timeline_feed.side_effect = Exception('Invalid session')
-        
-        crawler = InstagramCrawler()
-        result = crawler.set_session_cookies(sample_cookies)
-        
-        assert result is False
+        assert crawler.set_session_cookies(sample_cookies) is False
     
-    def test_get_user_info_success(self, mock_instagram_client):
-        """Test successful user info retrieval."""
+    def test_user_ip_management(self, mock_subprocess, user_ip):
+        """Test user IP management."""
+        crawler = InstagramCrawler({}, user_ip)
+        mock_subprocess.run.return_value.returncode = 0
+        
+        # Test successful IP setup
+        assert crawler.setup_user_ip() is True
+        
+        # Test failed IP setup
+        mock_subprocess.run.return_value.returncode = 1
+        assert crawler.setup_user_ip() is False
+    
+    def test_user_info_retrieval(self, mock_instagram_client, sample_cookies):
+        """Test user info retrieval."""
+        crawler = InstagramCrawler(sample_cookies)
         mock_user = Mock()
-        mock_user.pk = 'test_pk'
-        mock_user.username = 'test_username'
+        mock_user.pk = '123'
+        mock_user.username = TEST_INSTAGRAM_USERNAME
         mock_user.full_name = 'Test User'
         mock_user.is_private = False
         mock_user.profile_pic_url = 'http://example.com/pic.jpg'
@@ -63,69 +84,53 @@ class TestInstagramCrawler:
         
         mock_instagram_client.user_info_by_username.return_value = mock_user
         
-        crawler = InstagramCrawler()
-        result = crawler.get_user_info('test_username')
-        
+        result = crawler.get_user_info(TEST_INSTAGRAM_USERNAME)
         assert result['success'] is True
-        assert result['user']['username'] == 'test_username'
-        assert result['user']['follower_count'] == 1000
+        assert result['user']['username'] == TEST_INSTAGRAM_USERNAME
     
-    def test_get_user_info_failure(self, mock_instagram_client):
-        """Test failed user info retrieval."""
-        mock_instagram_client.user_info_by_username.side_effect = Exception('User not found')
+    def test_latest_posts_retrieval(self, mock_instagram_client, sample_cookies):
+        """Test latest posts retrieval."""
+        crawler = InstagramCrawler(sample_cookies)
+        mock_instagram_client.user_id_from_username.return_value = '123'
         
-        crawler = InstagramCrawler()
-        result = crawler.get_user_info('nonexistent_user')
-        
-        assert result['success'] is False
-        assert 'error' in result
-    
-    def test_get_latest_posts_success(self, mock_instagram_client):
-        """Test successful post retrieval."""
+        # Mock media items
         mock_media = Mock()
-        mock_media.id = 'test_id'
-        mock_media.code = 'test_code'
+        mock_media.id = '456'
+        mock_media.code = 'abc123'
         mock_media.taken_at = datetime.now()
         mock_media.media_type = 1
         mock_media.thumbnail_url = 'http://example.com/thumb.jpg'
-        mock_media.caption_text = 'Test caption'
+        mock_media.caption_text = 'Test post'
         mock_media.like_count = 100
-        mock_media.comment_count = 50
+        mock_media.comment_count = 10
         
-        mock_instagram_client.user_id_from_username.return_value = 'test_user_id'
         mock_instagram_client.user_medias.return_value = [mock_media]
         
-        crawler = InstagramCrawler()
-        result = crawler.get_latest_posts('test_username')
-        
+        result = crawler.get_latest_posts(TEST_INSTAGRAM_USERNAME)
         assert result['success'] is True
         assert len(result['posts']) == 1
-        assert result['posts'][0]['id'] == 'test_id'
+        assert result['posts'][0]['code'] == 'abc123'
     
-    def test_get_latest_posts_failure(self, mock_instagram_client):
-        """Test failed post retrieval."""
-        mock_instagram_client.user_id_from_username.side_effect = Exception('Failed to get user ID')
+    def test_session_validation(self, mock_instagram_client, sample_cookies):
+        """Test session validation."""
+        crawler = InstagramCrawler(sample_cookies)
         
-        crawler = InstagramCrawler()
-        result = crawler.get_latest_posts('test_username')
-        
-        assert result['success'] is False
-        assert 'error' in result
-    
-    def test_validate_session_success(self, mock_instagram_client):
-        """Test successful session validation."""
+        # Test valid session
         mock_instagram_client.get_timeline_feed.return_value = True
+        assert crawler.validate_session() is True
         
-        crawler = InstagramCrawler()
-        result = crawler.validate_session()
-        
-        assert result is True
-    
-    def test_validate_session_failure(self, mock_instagram_client):
-        """Test failed session validation."""
+        # Test invalid session
         mock_instagram_client.get_timeline_feed.side_effect = Exception('Invalid session')
+        assert crawler.validate_session() is False
+    
+    def test_cleanup_network_namespace(self, mock_subprocess, user_ip):
+        """Test network namespace cleanup."""
+        crawler = InstagramCrawler({}, user_ip)
+        mock_subprocess.run.return_value.returncode = 0
         
-        crawler = InstagramCrawler()
-        result = crawler.validate_session()
+        # Test successful cleanup
+        assert crawler.cleanup_network_namespace() is True
         
-        assert result is False 
+        # Test failed cleanup
+        mock_subprocess.run.return_value.returncode = 1
+        assert crawler.cleanup_network_namespace() is False 

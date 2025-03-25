@@ -1,6 +1,7 @@
 import time
 import json
 import logging
+import subprocess
 from instagrapi import Client
 from instagrapi.exceptions import LoginRequired, ClientError, ClientLoginRequired
 from typing import Dict, List, Optional, Union
@@ -12,15 +13,17 @@ class InstagramCrawler:
     Instagram crawler that uses existing session cookies for authentication.
     """
     
-    def __init__(self, session_cookies: Dict = None):
+    def __init__(self, session_cookies: Dict = None, user_ip: str = None):
         """
         Initialize the Instagram crawler with session cookies.
         
         Args:
             session_cookies (Dict): Dictionary containing session cookies from Instagram
+            user_ip (str): User's IP address for network namespace
         """
         self.logger = self._setup_logger()
         self.client = Client()
+        self.user_ip = user_ip
         
         # Set session cookies if provided
         if session_cookies:

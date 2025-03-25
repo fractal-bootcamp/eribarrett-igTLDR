@@ -5,6 +5,7 @@ from threading import Thread, Event
 from models import InstagramAccount, User
 from controllers.instagram_crawler import InstagramCrawler
 from config import get_config
+import threading
 
 logger = logging.getLogger(__name__)
 config = get_config()
@@ -14,9 +15,11 @@ class InstagramMonitor:
     
     def __init__(self):
         self.running = False
-        self.stop_event = Event()
-        self.monitor_thread = None
-        self.check_interval = config.get('INSTAGRAM_CHECK_INTERVAL', 300)  # 5 minutes
+        self.thread = None
+        self.check_interval = config.INSTAGRAM_CHECK_INTERVAL
+        self._stop_event = threading.Event()
+        self._lock = threading.Lock()
+        self._monitored_accounts = set()
     
     def start(self):
         """Start the monitoring service."""
@@ -24,10 +27,10 @@ class InstagramMonitor:
             return False
             
         self.running = True
-        self.stop_event.clear()
-        self.monitor_thread = Thread(target=self._monitor_loop)
-        self.monitor_thread.daemon = True
-        self.monitor_thread.start()
+        self._stop_event.clear()
+        self.thread = Thread(target=self._monitor_loop)
+        self.thread.daemon = True
+        self.thread.start()
         
         logger.info("Instagram monitor started")
         return True
@@ -37,9 +40,9 @@ class InstagramMonitor:
         if not self.running:
             return False
             
-        self.stop_event.set()
-        if self.monitor_thread:
-            self.monitor_thread.join()
+        self._stop_event.set()
+        if self.thread:
+            self.thread.join()
         self.running = False
         
         logger.info("Instagram monitor stopped")
@@ -51,14 +54,14 @@ class InstagramMonitor:
     
     def _monitor_loop(self):
         """Main monitoring loop."""
-        while not self.stop_event.is_set():
+        while not self._stop_event.is_set():
             try:
                 self._check_all_accounts()
             except Exception as e:
                 logger.error(f"Error in monitor loop: {str(e)}")
             
             # Wait for next check or stop event
-            self.stop_event.wait(self.check_interval)
+            self._stop_event.wait(self.check_interval)
     
     def _check_all_accounts(self):
         """Check all active accounts for new posts."""

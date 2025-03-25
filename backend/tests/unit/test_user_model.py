@@ -4,121 +4,85 @@ Unit tests for User model.
 import os
 import json
 import pytest
-import tempfile
 from datetime import datetime
-import time
+from models.user import User
+from config import get_config
 
-# Ensure tests use temporary file
-import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+config = get_config()
 
-from models.user import User, USER_FILE
+@pytest.fixture(autouse=True)
+def setup_test_env():
+    """Setup test environment."""
+    # Create test data directory
+    os.makedirs(config.DATA_DIR, exist_ok=True)
+    yield
+    # Cleanup after tests
+    user_file = os.path.join(config.DATA_DIR, 'users.json')
+    if os.path.exists(user_file):
+        os.remove(user_file)
 
-class TestUserModel:
-    """Tests for User model."""
+def test_create_user():
+    """Test user creation."""
+    user = User(username='test_user')
+    assert user.username == 'test_user'
+    assert user.user_id is not None
+    assert user.created_at is not None
+
+def test_save_and_load_user():
+    """Test user save and load."""
+    user = User(username='test_user')
+    user.save()
     
-    @pytest.fixture(autouse=True)
-    def setup_and_teardown(self):
-        """Setup test user file and clean up after tests."""
-        # Use temporary file for users
-        users_fd, users_path = tempfile.mkstemp()
-        self.original_user_file = USER_FILE
-        User.USER_FILE = users_path
-        
-        yield
-        
-        # Restore original user file and clean up
-        User.USER_FILE = self.original_user_file
-        os.close(users_fd)
-        os.unlink(users_path)
+    loaded_user = User.find_by_id(user.user_id)
+    assert loaded_user is not None
+    assert loaded_user.username == user.username
+    assert loaded_user.user_id == user.user_id
+
+def test_find_by_username():
+    """Test finding user by username."""
+    user = User(username='test_user')
+    user.save()
     
-    def test_create_user(self):
-        """Test user creation."""
-        user = User(username="testuser", email="test@example.com")
-        
-        # Check attributes
-        assert user.username == "testuser"
-        assert user.email == "test@example.com"
-        assert user.user_id is not None
-        assert user.created_at is not None
-        
-        # Check that user_id is a UUID string
-        assert len(user.user_id) > 30
+    found_user = User.find_by_username('test_user')
+    assert found_user is not None
+    assert found_user.user_id == user.user_id
+
+def test_get_or_create():
+    """Test get or create user."""
+    # Test creating new user
+    user1 = User.get_or_create('test_user')
+    assert user1.username == 'test_user'
     
-    def test_save_and_find_user(self):
-        """Test saving user and finding it."""
-        # Create and save user
-        user = User(username="findme", email="find@example.com")
-        user.save()
-        
-        # Find user by username
-        found_user = User.find_by_username("findme")
-        assert found_user is not None
-        assert found_user.username == "findme"
-        assert found_user.email == "find@example.com"
-        assert found_user.user_id == user.user_id
-        
-        # Find user by email
-        found_user = User.find_by_email("find@example.com")
-        assert found_user is not None
-        assert found_user.username == "findme"
-        
-        # Find user by ID
-        found_user = User.find_by_id(user.user_id)
-        assert found_user is not None
-        assert found_user.username == "findme"
+    # Test getting existing user
+    user2 = User.get_or_create('test_user')
+    assert user2.user_id == user1.user_id
+
+def test_delete_user():
+    """Test user deletion."""
+    user = User(username='test_user')
+    user.save()
     
-    def test_to_dict(self):
-        """Test converting user to dictionary."""
-        user = User(username="dictuser", email="dict@example.com", password_hash="fakehash")
-        user_dict = user.to_dict()
-        
-        assert user_dict["username"] == "dictuser"
-        assert user_dict["email"] == "dict@example.com"
-        assert user_dict["password_hash"] == "fakehash"
-        assert "user_id" in user_dict
-        assert "created_at" in user_dict
+    user.delete()
+    assert User.find_by_id(user.user_id) is None
+
+def test_token_generation():
+    """Test JWT token generation."""
+    user = User(username='test_user')
+    token = user.generate_token()
+    assert token is not None
     
-    def test_update_user(self):
-        """Test updating existing user."""
-        # Create and save user
-        user = User(username="updateme", email="update@example.com")
-        user.save()
-        
-        # Modify and save again
-        user.email = "updated@example.com"
-        user.save()
-        
-        # Find user and check if updated
-        found_user = User.find_by_username("updateme")
-        assert found_user.email == "updated@example.com"
-    
-    def test_delete_user(self):
-        """Test deleting a user."""
-        # Create and save user
-        user = User(username="deleteme", email="delete@example.com")
-        user.save()
-        
-        # Delete user
-        user.delete()
-        
-        # Verify user is deleted
-        found_user = User.find_by_username("deleteme")
-        assert found_user is None
-    
-    def test_token_generation_and_verification(self):
-        """Test JWT token generation and verification."""
-        user = User(username="tokenuser", email="token@example.com")
-        user.save()
-        
-        # Generate token
-        token = user.generate_token()
-        assert token is not None
-        
-        # Verify token
-        user_id = User.verify_token(token)
-        assert user_id == user.user_id
-        
-        # Test invalid token
-        invalid_id = User.verify_token("invalid.token.here")
-        assert invalid_id is None 
+    # Verify token
+    user_id = User.verify_token(token)
+    assert user_id == user.user_id
+
+def test_invalid_token():
+    """Test invalid token handling."""
+    assert User.verify_token('invalid_token') is None
+
+def test_to_dict():
+    """Test user to dictionary conversion."""
+    user = User(username='test_user')
+    user_dict = user.to_dict()
+    assert user_dict['username'] == user.username
+    assert user_dict['user_id'] == user.user_id
+    assert user_dict['created_at'] == user.created_at 

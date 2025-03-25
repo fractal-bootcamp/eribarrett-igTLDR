@@ -3,157 +3,117 @@ Unit tests for AuthController.
 """
 import os
 import pytest
-import tempfile
-import unittest.mock as mock
 from datetime import datetime
-
-# Ensure tests use temporary file
-import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-
-from models.user import User, USER_FILE
-from models.instagram_account import InstagramAccount, ACCOUNTS_FILE
+from unittest.mock import Mock, patch
+from models.user import User
+from models.instagram_account import InstagramAccount
 from controllers.auth_controller import AuthController
 from tests.mocks import MockInstagramClient
+from config import get_config
 
-class TestAuthController:
-    """Tests for AuthController."""
+config = get_config()
+
+@pytest.fixture(autouse=True)
+def setup_test_env():
+    """Setup test environment."""
+    # Create test data directory
+    os.makedirs(config.DATA_DIR, exist_ok=True)
+    yield
+    # Cleanup after tests
+    user_file = os.path.join(config.DATA_DIR, 'users.json')
+    account_file = os.path.join(config.DATA_DIR, 'instagram_accounts.json')
+    if os.path.exists(user_file):
+        os.remove(user_file)
+    if os.path.exists(account_file):
+        os.remove(account_file)
+
+@pytest.fixture
+def mock_instagram_client():
+    """Mock Instagram client."""
+    with patch('controllers.auth_controller.Client') as mock:
+        client = Mock()
+        mock.return_value = client
+        yield client
+
+@pytest.fixture
+def sample_user():
+    """Sample user data."""
+    return {
+        'user_id': 'test_user_id',
+        'username': 'test_user'
+    }
+
+@pytest.fixture
+def sample_cookies():
+    """Sample Instagram session cookies."""
+    return {
+        'sessionid': 'test_session_id',
+        'csrftoken': 'test_csrf_token'
+    }
+
+def test_register():
+    """Test user registration."""
+    result = AuthController.register('test_user')
+    assert result['success'] is True
+    assert result['user']['username'] == 'test_user'
     
-    @pytest.fixture(autouse=True)
-    def setup_and_teardown(self):
-        """Setup test files and clean up after tests."""
-        # Use temporary files for users and accounts
-        users_fd, users_path = tempfile.mkstemp()
-        accounts_fd, accounts_path = tempfile.mkstemp()
-        
-        self.original_user_file = USER_FILE
-        self.original_accounts_file = ACCOUNTS_FILE
-        
-        User.USER_FILE = users_path
-        InstagramAccount.ACCOUNTS_FILE = accounts_path
-        
-        yield
-        
-        # Restore original files and clean up
-        User.USER_FILE = self.original_user_file
-        InstagramAccount.ACCOUNTS_FILE = self.original_accounts_file
-        
-        os.close(users_fd)
-        os.close(accounts_fd)
-        os.unlink(users_path)
-        os.unlink(accounts_path)
+    # Test duplicate registration
+    result = AuthController.register('test_user')
+    assert result['success'] is False
+    assert 'error' in result
+
+def test_login():
+    """Test user login."""
+    # Register user first
+    AuthController.register('test_user')
     
-    def test_register_new_user(self):
-        """Test registering a new user."""
-        result = AuthController.register("newuser", "new@example.com", "password123")
-        
-        assert result["success"] is True
-        assert "user_id" in result
-        assert "token" in result
-        
-        # Verify user was created
-        user = User.find_by_username("newuser")
-        assert user is not None
-        assert user.email == "new@example.com"
-        assert user.password_hash is not None
+    # Test successful login
+    result = AuthController.login('test_user')
+    assert result['success'] is True
+    assert 'token' in result
+    assert result['user']['username'] == 'test_user'
     
-    def test_register_existing_username(self):
-        """Test registering with an existing username."""
-        # Create a user first
-        AuthController.register("existinguser", "existing@example.com", "password123")
-        
-        # Try to register with same username
-        result = AuthController.register("existinguser", "another@example.com", "password456")
-        
-        assert result["success"] is False
-        assert "error" in result
-        assert "Username already exists" in result["error"]
+    # Test login with non-existent user
+    result = AuthController.login('nonexistent')
+    assert result['success'] is False
+    assert 'error' in result
+
+def test_logout():
+    """Test user logout."""
+    # Register and login user
+    AuthController.register('test_user')
+    login_result = AuthController.login('test_user')
+    token = login_result['token']
     
-    def test_register_existing_email(self):
-        """Test registering with an existing email."""
-        # Create a user first
-        AuthController.register("emailuser", "duplicate@example.com", "password123")
-        
-        # Try to register with same email
-        result = AuthController.register("another", "duplicate@example.com", "password456")
-        
-        assert result["success"] is False
-        assert "error" in result
-        assert "Email already exists" in result["error"]
+    # Test successful logout
+    result = AuthController.logout(token)
+    assert result['success'] is True
     
-    def test_login_valid(self):
-        """Test logging in with valid credentials."""
-        # Create a user first
-        AuthController.register("loginuser", "login@example.com", "correctpassword")
-        
-        # Login with correct credentials
-        result = AuthController.login("loginuser", "correctpassword")
-        
-        assert result["success"] is True
-        assert "user_id" in result
-        assert "token" in result
+    # Test logout with invalid token
+    result = AuthController.logout('invalid_token')
+    assert result['success'] is False
+    assert 'error' in result
+
+def test_get_current_user():
+    """Test getting current user."""
+    # Register and login user
+    AuthController.register('test_user')
+    login_result = AuthController.login('test_user')
+    token = login_result['token']
     
-    def test_login_invalid_username(self):
-        """Test logging in with invalid username."""
-        result = AuthController.login("nonexistent", "anypassword")
-        
-        assert result["success"] is False
-        assert "error" in result
+    # Test getting current user
+    result = AuthController.get_current_user(token)
+    assert result['success'] is True
+    assert result['user']['username'] == 'test_user'
     
-    def test_login_invalid_password(self):
-        """Test logging in with invalid password."""
-        # Create a user first
-        AuthController.register("passworduser", "pwd@example.com", "correctpassword")
-        
-        # Login with incorrect password
-        result = AuthController.login("passworduser", "wrongpassword")
-        
-        assert result["success"] is False
-        assert "error" in result
-    
-    @mock.patch('controllers.auth_controller.InstagramClient')
-    def test_instagram_login(self, mock_instagram_client):
-        """Test Instagram login functionality."""
-        # Setup mock
-        mock_client_instance = MockInstagramClient()
-        mock_instagram_client.return_value = mock_client_instance
-        
-        # Create a user
-        user_result = AuthController.register("instauser", "insta@example.com", "password123")
-        user_id = user_result["user_id"]
-        
-        # Login to Instagram
-        result = AuthController.instagram_login("instagram_username", "instagram_password", user_id)
-        
-        assert result["success"] is True
-        assert "account_id" in result
-        
-        # Verify account was created
-        accounts = InstagramAccount.find_by_user(user_id)
-        assert len(accounts) == 1
-        assert accounts[0].username == "instagram_username"
-    
-    @mock.patch('controllers.auth_controller.InstagramClient')
-    def test_instagram_login_failure(self, mock_instagram_client):
-        """Test Instagram login failure handling."""
-        # Setup mock to fail
-        mock_client_instance = MockInstagramClient(login_success=False)
-        mock_instagram_client.return_value = mock_client_instance
-        
-        # Create a user
-        user_result = AuthController.register("failuser", "fail@example.com", "password123")
-        user_id = user_result["user_id"]
-        
-        # Attempt login to Instagram
-        result = AuthController.instagram_login("instagram_username", "wrong_password", user_id)
-        
-        assert result["success"] is False
-        assert "error" in result
-    
-    def test_instagram_login_nonexistent_user(self):
-        """Test Instagram login with nonexistent user."""
-        result = AuthController.instagram_login("instagram_username", "instagram_password", "fake_user_id")
-        
-        assert result["success"] is False
-        assert "error" in result
-        assert "User not found" in result["error"] 
+    # Test with invalid token
+    result = AuthController.get_current_user('invalid_token')
+    assert result['success'] is False
+    assert 'error' in result
+
+def test_instagram_login():
+    """Test Instagram login."""
+    result = AuthController.instagram_login('test_user', '127.0.0.1')
+    assert result['success'] is True
+    assert result['account']['username'] == 'test_user'
+    assert result['account']['user_ip'] == '127.0.0.1' 
