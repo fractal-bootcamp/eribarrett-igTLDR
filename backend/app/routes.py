@@ -3,8 +3,12 @@ import jwt
 from functools import wraps
 from config import get_config
 from models import User, InstagramAccount, NotificationSettings
-from controllers import AuthController, instagram_monitor, InstagramClient
+from controllers import AuthController, instagram_monitor
+from controllers.instagram_crawler import InstagramCrawler
+from controllers.instagram_monitor import InstagramMonitor
+import logging
 
+logger = logging.getLogger(__name__)
 api = Blueprint('api', __name__)
 config = get_config()
 
@@ -41,43 +45,42 @@ def token_required(f):
     
     return decorated
 
+def require_auth(f):
+    """Decorator to require authentication for routes."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        user = AuthController.get_current_user()
+        if not user:
+            return jsonify({'error': 'Authentication required'}), 401
+        return f(*args, **kwargs)
+    return decorated
+
 # Auth routes
 @api.route('/auth/register', methods=['POST'])
 def register():
     """Register a new user."""
-    data = request.get_json()
-    
-    username = data.get('username')
-    email = data.get('email')
-    password = data.get('password')
-    
-    if not username or not email or not password:
-        return jsonify({'success': False, 'error': 'Missing required fields'}), 400
-        
-    result = AuthController.register(username, email, password)
-    
-    if result.get('success'):
-        return jsonify(result), 201
-    else:
-        return jsonify(result), 400
+    return AuthController.register()
 
 @api.route('/auth/login', methods=['POST'])
 def login():
-    """Login a user."""
-    data = request.get_json()
-    
-    username = data.get('username')
-    password = data.get('password')
-    
-    if not username or not password:
-        return jsonify({'success': False, 'error': 'Missing required fields'}), 400
-        
-    result = AuthController.login(username, password)
-    
-    if result.get('success'):
-        return jsonify(result), 200
-    else:
-        return jsonify(result), 401
+    """Login user."""
+    return AuthController.login()
+
+@api.route('/auth/logout', methods=['POST'])
+def logout():
+    """Logout user."""
+    return AuthController.logout()
+
+@api.route('/auth/me', methods=['GET'])
+@require_auth
+def get_current_user():
+    """Get current user information."""
+    user = AuthController.get_current_user()
+    return jsonify({
+        'id': user.user_id,
+        'username': user.username,
+        'email': user.email
+    })
 
 @api.route('/auth/instagram', methods=['POST'])
 @token_required
@@ -98,97 +101,102 @@ def instagram_login(current_user):
     else:
         return jsonify(result), 400
 
+def get_user():
+    """Get or create the single user instance."""
+    return User.get_or_create()
+
 # Account routes
 @api.route('/accounts', methods=['GET'])
-@token_required
-def get_accounts(current_user):
-    """Get all Instagram accounts for the current user."""
-    accounts = InstagramAccount.find_by_user(current_user.user_id)
-    
-    # Remove sensitive data
-    accounts_data = []
-    for account in accounts:
-        account_data = account.to_dict()
-        account_data.pop('encrypted_cookies', None)
-        accounts_data.append(account_data)
-        
-    return jsonify({
-        'success': True,
-        'accounts': accounts_data
-    }), 200
+@require_auth
+def get_accounts():
+    """Get all Instagram accounts for current user."""
+    try:
+        user = AuthController.get_current_user()
+        monitor = InstagramMonitor()
+        accounts = monitor.get_accounts(user.user_id)
+        return jsonify(accounts)
+    except Exception as e:
+        logger.error(f"Error getting accounts: {str(e)}")
+        return jsonify({'error': 'Failed to get accounts'}), 500
 
-@api.route('/accounts/<account_id>', methods=['GET'])
-@token_required
-def get_account(current_user, account_id):
-    """Get a specific Instagram account."""
-    account = InstagramAccount.find_by_id(account_id)
-    
-    if not account:
-        return jsonify({'success': False, 'error': 'Account not found'}), 404
-        
-    # Check if the account belongs to the current user
-    if account.user_id != current_user.user_id:
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-        
-    # Remove sensitive data
-    account_data = account.to_dict()
-    account_data.pop('encrypted_cookies', None)
-        
-    return jsonify({
-        'success': True,
-        'account': account_data
-    }), 200
+@api.route('/accounts', methods=['POST'])
+@require_auth
+def add_account():
+    """Add a new Instagram account."""
+    try:
+        data = request.get_json()
+        if not data or not data.get('username') or not data.get('user_ip'):
+            return jsonify({'error': 'Username and user IP are required'}), 400
+            
+        user = AuthController.get_current_user()
+        monitor = InstagramMonitor()
+        account = monitor.add_account(user.user_id, data['username'], data['user_ip'])
+        return jsonify(account), 201
+    except Exception as e:
+        logger.error(f"Error adding account: {str(e)}")
+        return jsonify({'error': 'Failed to add account'}), 500
 
-@api.route('/accounts/<account_id>', methods=['DELETE'])
-@token_required
-def delete_account(current_user, account_id):
-    """Delete an Instagram account."""
-    account = InstagramAccount.find_by_id(account_id)
-    
-    if not account:
-        return jsonify({'success': False, 'error': 'Account not found'}), 404
-        
-    # Check if the account belongs to the current user
-    if account.user_id != current_user.user_id:
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-        
-    account.delete()
-        
-    return jsonify({
-        'success': True,
-        'message': 'Account deleted'
-    }), 200
+@api.route('/accounts/<username>', methods=['DELETE'])
+@require_auth
+def remove_account(username):
+    """Remove an Instagram account."""
+    try:
+        user = AuthController.get_current_user()
+        monitor = InstagramMonitor()
+        monitor.remove_account(user.user_id, username)
+        return jsonify({'message': 'Account removed successfully'})
+    except Exception as e:
+        logger.error(f"Error removing account: {str(e)}")
+        return jsonify({'error': 'Failed to remove account'}), 500
 
-@api.route('/accounts/<account_id>/check', methods=['POST'])
-@token_required
-def check_account(current_user, account_id):
-    """Check an account for new posts immediately."""
-    account = InstagramAccount.find_by_id(account_id)
-    
-    if not account:
-        return jsonify({'success': False, 'error': 'Account not found'}), 404
-        
-    # Check if the account belongs to the current user
-    if account.user_id != current_user.user_id:
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-        
-    result = instagram_monitor.check_now(account_id)
-        
-    return jsonify({
-        'success': result,
-        'message': 'Account checked' if result else 'Failed to check account'
-    }), 200 if result else 500
+@api.route('/accounts/<username>/status', methods=['GET'])
+@require_auth
+def get_account_status(username):
+    """Get monitoring status for an account."""
+    try:
+        user = AuthController.get_current_user()
+        monitor = InstagramMonitor()
+        status = monitor.get_account_status(user.user_id, username)
+        return jsonify(status)
+    except Exception as e:
+        logger.error(f"Error getting account status: {str(e)}")
+        return jsonify({'error': 'Failed to get account status'}), 500
+
+@api.route('/accounts/<username>/start', methods=['POST'])
+@require_auth
+def start_monitoring(username):
+    """Start monitoring an Instagram account."""
+    try:
+        user = AuthController.get_current_user()
+        monitor = InstagramMonitor()
+        monitor.start_monitoring(user.user_id, username)
+        return jsonify({'message': 'Monitoring started successfully'})
+    except Exception as e:
+        logger.error(f"Error starting monitoring: {str(e)}")
+        return jsonify({'error': 'Failed to start monitoring'}), 500
+
+@api.route('/accounts/<username>/stop', methods=['POST'])
+@require_auth
+def stop_monitoring(username):
+    """Stop monitoring an Instagram account."""
+    try:
+        user = AuthController.get_current_user()
+        monitor = InstagramMonitor()
+        monitor.stop_monitoring(user.user_id, username)
+        return jsonify({'message': 'Monitoring stopped successfully'})
+    except Exception as e:
+        logger.error(f"Error stopping monitoring: {str(e)}")
+        return jsonify({'error': 'Failed to stop monitoring'}), 500
 
 # Dashboard routes
 @api.route('/dashboard/stats', methods=['GET'])
-@token_required
-def get_dashboard_stats(current_user):
+def get_dashboard_stats():
     """Get Instagram account statistics for the dashboard."""
-    accounts = InstagramAccount.find_by_user(current_user.user_id)
+    user = get_user()
+    accounts = InstagramAccount.find_by_user(user.user_id)
     
     if not accounts:
         return jsonify({
-            'success': True,
             'stats': [],
             'message': 'No Instagram accounts found'
         }), 200
@@ -199,8 +207,12 @@ def get_dashboard_stats(current_user):
             continue
             
         # Get account stats
-        client = InstagramClient(account.get_cookies())
-        if not client.validate_session():
+        crawler = InstagramCrawler(
+            session_cookies=account.get_cookies(),
+            user_ip=account.user_ip  # Use the user's IP
+        )
+        
+        if not crawler.validate_session():
             stats.append({
                 'account_id': account.account_id,
                 'username': account.username,
@@ -209,7 +221,7 @@ def get_dashboard_stats(current_user):
             })
             continue
             
-        user_info = client.get_user_info(account.username)
+        user_info = crawler.get_user_info(account.username)
         if not user_info.get('success'):
             stats.append({
                 'account_id': account.account_id,
@@ -231,85 +243,23 @@ def get_dashboard_stats(current_user):
             'profile_pic_url': user_info['user']['profile_pic_url']
         })
     
-    return jsonify({
-        'success': True,
-        'stats': stats
-    }), 200
-
-# Preferences routes
-@api.route('/preferences', methods=['GET'])
-@token_required
-def get_preferences(current_user):
-    """Get notification preferences for the current user."""
-    settings = NotificationSettings.find_by_user(current_user.user_id)
-    
-    return jsonify({
-        'success': True,
-        'preferences': {
-            'email_enabled': settings.email_enabled,
-            'telegram_enabled': settings.telegram_enabled,
-            'check_interval': settings.check_interval,
-            'summary_length': settings.summary_length,
-            'include_images': settings.include_images
-        }
-    }), 200
-
-@api.route('/preferences', methods=['POST'])
-@token_required
-def update_preferences(current_user):
-    """Update notification preferences."""
-    data = request.get_json()
-    settings = NotificationSettings.find_by_user(current_user.user_id)
-    
-    # Update settings with provided data
-    if 'email_enabled' in data:
-        settings.email_enabled = bool(data.get('email_enabled'))
-    
-    if 'telegram_enabled' in data:
-        settings.telegram_enabled = bool(data.get('telegram_enabled'))
-    
-    if 'check_interval' in data:
-        settings.check_interval = int(data.get('check_interval'))
-    
-    if 'summary_length' in data:
-        summary_length = data.get('summary_length')
-        if summary_length in ['short', 'medium', 'long']:
-            settings.summary_length = summary_length
-    
-    if 'include_images' in data:
-        settings.include_images = bool(data.get('include_images'))
-    
-    settings.save()
-    
-    return jsonify({
-        'success': True,
-        'preferences': {
-            'email_enabled': settings.email_enabled,
-            'telegram_enabled': settings.telegram_enabled,
-            'check_interval': settings.check_interval,
-            'summary_length': settings.summary_length,
-            'include_images': settings.include_images
-        }
-    }), 200
+    return jsonify({'stats': stats}), 200
 
 # Monitor routes
 @api.route('/monitor/manual-check', methods=['POST'])
-@token_required
-def manual_check(current_user):
+@require_auth
+def manual_check():
     """Manually check all accounts for new posts."""
     data = request.get_json()
     account_id = data.get('account_id')
+    user = AuthController.get_current_user()
     
     if account_id:
         # Check specific account
         account = InstagramAccount.find_by_id(account_id)
         
         if not account:
-            return jsonify({'success': False, 'error': 'Account not found'}), 404
-            
-        # Check if the account belongs to the current user
-        if account.user_id != current_user.user_id:
-            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+            return jsonify({'error': 'Account not found'}), 404
             
         result = instagram_monitor.check_now(account_id)
             
@@ -319,7 +269,7 @@ def manual_check(current_user):
         }), 200 if result else 500
     else:
         # Check all accounts
-        accounts = InstagramAccount.find_by_user(current_user.user_id)
+        accounts = InstagramAccount.find_by_user(user.user_id)
         results = []
         
         for account in accounts:
@@ -331,23 +281,19 @@ def manual_check(current_user):
                     'success': success
                 })
         
-        return jsonify({
-            'success': True,
-            'results': results
-        }), 200
+        return jsonify({'results': results}), 200
 
 @api.route('/monitor/status', methods=['GET'])
-@token_required
-def monitor_status(current_user):
+@require_auth
+def monitor_status():
     """Get status of the monitoring service."""
     return jsonify({
-        'success': True,
         'running': instagram_monitor.is_running()
     }), 200
 
 @api.route('/monitor/start', methods=['POST'])
-@token_required
-def start_monitor(current_user):
+@require_auth
+def start_monitor():
     """Start the monitoring service."""
     result = instagram_monitor.start()
     
@@ -357,8 +303,8 @@ def start_monitor(current_user):
     }), 200
 
 @api.route('/monitor/stop', methods=['POST'])
-@token_required
-def stop_monitor(current_user):
+@require_auth
+def stop_monitor():
     """Stop the monitoring service."""
     result = instagram_monitor.stop()
     

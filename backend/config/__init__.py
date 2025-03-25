@@ -1,8 +1,39 @@
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
+
+def get_config():
+    """Get application configuration."""
+    return {
+        # Flask configuration
+        'SECRET_KEY': os.getenv('SECRET_KEY', 'dev'),
+        'DEBUG': os.getenv('FLASK_DEBUG', 'False').lower() == 'true',
+        
+        # JWT configuration
+        'JWT_SECRET': os.getenv('JWT_SECRET', 'dev'),
+        'JWT_ACCESS_TOKEN_EXPIRES': int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES', 30 * 24 * 60 * 60)),  # 30 days
+        
+        # Instagram configuration
+        'INSTAGRAM_CHECK_INTERVAL': int(os.getenv('INSTAGRAM_CHECK_INTERVAL', 300)),  # 5 minutes
+        'INSTAGRAM_MAX_RETRIES': int(os.getenv('INSTAGRAM_MAX_RETRIES', 3)),
+        'INSTAGRAM_RETRY_DELAY': int(os.getenv('INSTAGRAM_RETRY_DELAY', 60)),  # 1 minute
+        'INSTAGRAM_PROXY': os.getenv('INSTAGRAM_PROXY'),  # Proxy URL (e.g., "http://user:pass@host:port")
+        
+        # Rate limiting
+        'RATELIMIT_ENABLED': os.getenv('RATELIMIT_ENABLED', 'True').lower() == 'true',
+        'RATELIMIT_STORAGE_URL': os.getenv('RATELIMIT_STORAGE_URL', 'memory://'),
+        'RATELIMIT_STRATEGY': os.getenv('RATELIMIT_STRATEGY', 'fixed-window'),
+        'RATELIMIT_DEFAULT': os.getenv('RATELIMIT_DEFAULT', '200 per day'),
+        
+        # Logging
+        'LOG_LEVEL': os.getenv('LOG_LEVEL', 'INFO'),
+        'LOG_FILE': os.getenv('LOG_FILE', 'app.log'),
+        
+        # Database
+        'DB_PATH': os.getenv('DB_PATH', 'data')
+    }
 
 class Config:
     """Base configuration."""
