@@ -3,21 +3,22 @@ import json
 import uuid
 import datetime
 from utils import encrypt_data, decrypt_data
+from typing import Dict, List, Optional
 
 ACCOUNTS_FILE = 'instagram_accounts.json'
 
 class InstagramAccount:
     """Instagram account model for storing encrypted session cookies."""
     
-    def __init__(self, user_id, username, encrypted_cookies, account_id=None, 
-                 last_check=None, created_at=None, active=True):
-        self.account_id = account_id or str(uuid.uuid4())
+    def __init__(self, account_id: str, user_id: str, username: str, user_ip: str, cookies: Dict = None, active: bool = True, last_check: datetime = None, created_at: datetime = None):
+        self.account_id = account_id
         self.user_id = user_id
         self.username = username
-        self.encrypted_cookies = encrypted_cookies
-        self.last_check = last_check
-        self.created_at = created_at or datetime.datetime.utcnow().isoformat()
+        self.user_ip = user_ip  # Store user's IP address
+        self.cookies = cookies or {}
         self.active = active
+        self.last_check = last_check or datetime.datetime.utcnow()
+        self.created_at = created_at or datetime.datetime.utcnow()
     
     @classmethod
     def get_accounts(cls):
@@ -40,78 +41,71 @@ class InstagramAccount:
             json.dump(accounts_data, f, indent=2)
     
     @classmethod
-    def find_by_id(cls, account_id):
-        """Find an account by ID."""
+    def find_by_id(cls, account_id: str) -> Optional['InstagramAccount']:
+        """Find an Instagram account by ID."""
         accounts = cls.get_accounts()
-        for account in accounts:
-            if account.account_id == account_id:
-                return account
-        return None
+        return next((acc for acc in accounts if acc.account_id == account_id), None)
     
     @classmethod
-    def find_by_username(cls, username, user_id=None):
-        """Find an account by username and optionally filter by user_id."""
+    def find_by_username(cls, username: str) -> Optional['InstagramAccount']:
+        """Find an Instagram account by username."""
         accounts = cls.get_accounts()
-        for account in accounts:
-            if account.username == username:
-                if user_id is None or account.user_id == user_id:
-                    return account
-        return None
+        return next((acc for acc in accounts if acc.username == username), None)
     
     @classmethod
-    def find_by_user(cls, user_id):
-        """Find all accounts for a specific user."""
+    def find_by_user(cls, user_id: str) -> List['InstagramAccount']:
+        """Find all Instagram accounts for a user."""
         accounts = cls.get_accounts()
-        return [account for account in accounts if account.user_id == user_id]
+        return [acc for acc in accounts if acc.user_id == user_id]
     
     def save(self):
-        """Save the account to the database."""
+        """Save the Instagram account data."""
         accounts = self.get_accounts()
         
-        # Check if account already exists
-        for i, account in enumerate(accounts):
-            if account.account_id == self.account_id:
-                # Update existing account
+        # Update existing account or add new one
+        found = False
+        for i, acc in enumerate(accounts):
+            if acc.account_id == self.account_id:
                 accounts[i] = self
-                self.save_accounts(accounts)
-                return True
+                found = True
+                break
         
-        # Add new account
-        accounts.append(self)
+        if not found:
+            accounts.append(self)
+        
+        # Save to file
         self.save_accounts(accounts)
         return True
     
     def delete(self):
-        """Delete the account from the database."""
+        """Delete the Instagram account."""
         accounts = self.get_accounts()
-        accounts = [account for account in accounts if account.account_id != self.account_id]
+        accounts = [acc for acc in accounts if acc.account_id != self.account_id]
         self.save_accounts(accounts)
         return True
     
-    def to_dict(self):
-        """Convert account object to dictionary."""
+    def to_dict(self) -> Dict:
+        """Convert the account to a dictionary."""
         return {
             'account_id': self.account_id,
             'user_id': self.user_id,
             'username': self.username,
-            'encrypted_cookies': self.encrypted_cookies,
-            'last_check': self.last_check,
-            'created_at': self.created_at,
-            'active': self.active
+            'user_ip': self.user_ip,
+            'active': self.active,
+            'last_check': self.last_check.isoformat() if self.last_check else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None
         }
     
-    def get_cookies(self):
-        """Decrypt and return the session cookies."""
-        if not self.encrypted_cookies:
-            return None
-        return decrypt_data(self.encrypted_cookies)
+    def get_cookies(self) -> Dict:
+        """Get the account's cookies."""
+        return self.cookies
     
     def update_cookies(self, cookies):
         """Encrypt and update the session cookies."""
-        self.encrypted_cookies = encrypt_data(cookies)
+        self.cookies = cookies
         return self.save()
     
     def update_last_check(self):
         """Update the last check timestamp."""
-        self.last_check = datetime.datetime.utcnow().isoformat()
+        self.last_check = datetime.datetime.utcnow()
         return self.save() 

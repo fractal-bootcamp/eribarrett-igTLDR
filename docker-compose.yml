@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app
+    environment:
+      - FLASK_APP=app.py
+      - FLASK_ENV=development
+    # Enable network namespace manipulation
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    # Use host network mode
+    network_mode: "host"
+    # Allow container to manipulate network namespaces
+    privileged: true
