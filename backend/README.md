@@ -119,27 +119,40 @@ You can collect your Instagram feed posts directly using Instagram's private API
 python scripts/collect_direct_feed.py
 ```
 
+When running the script, you'll be presented with an interactive menu to select an operation mode:
+
+- **<span style="color:green">Safe Mode</span>** - Slower collection with better safety (default, recommended)
+- **<span style="color:blue">Ultra-Safe Mode</span>** - Very slow collection with maximum safety
+- **<span style="color:red">Standard Mode</span>** - Faster collection with moderate safety (for burner accounts only)
+- **<span style="color:gray">Custom Mode</span>** - Manually set delay and batch parameters
+
+Simply use the ↑ and ↓ arrows to navigate, then press Enter to select.
+
+Alternatively, you can specify a mode directly using command-line options:
+
 Options:
 - `-n`, `--num-posts`: Maximum number of posts to collect (default: 50)
 - `--min-delay`: Minimum delay between requests in seconds (default: 3)
 - `--max-delay`: Maximum delay between requests in seconds (default: 10)
 - `--output-dir`: Directory to save feed posts (default: data/direct_feed)
 - `--batch-size`: Number of posts per batch/request (default: 10)
-- `--safe-mode`: Enable extra-safe mode with longer delays and smaller batches
+- `--safe-mode`: Enable safe mode with longer delays and smaller batches
+- `--ultra-safe-mode`: Enable ultra-safe mode that mimics natural user behavior
+- `--simulate-browsing`: Simulate realistic browsing with random pauses
 
 Examples:
 ```bash
-# Collect 100 feed posts
-python scripts/collect_direct_feed.py -n 100
+# Collect with interactive menu selection (recommended)
+python scripts/collect_direct_feed.py
 
-# Collect with longer delays between requests
-python scripts/collect_direct_feed.py --min-delay 5 --max-delay 15
+# Specify mode directly: collect 30 posts with safe mode
+python scripts/collect_direct_feed.py --safe-mode -n 30
 
-# Use safe mode to reduce detection risk
-python scripts/collect_direct_feed.py --safe-mode
+# Specify mode directly: use ultra-safe mode
+python scripts/collect_direct_feed.py --ultra-safe-mode -n 20
 
-# Specify a custom output directory
-python scripts/collect_direct_feed.py --output-dir data/my_feed
+# Specify mode directly: custom settings
+python scripts/collect_direct_feed.py --min-delay 10 --max-delay 30 --batch-size 5 --simulate-browsing
 ```
 
 This approach:
@@ -150,7 +163,13 @@ This approach:
 - Handles pagination to collect multiple batches of posts
 
 ⚠️ **Safety Recommendations**:
-- Use `--safe-mode` for more conservative settings to reduce detection risk
+- Use `--ultra-safe-mode` when account safety is critical - this mode:
+  - Uses very long delays (15-45 seconds between requests)
+  - Uses tiny batch sizes (only 3 posts per batch)
+  - Simulates realistic human browsing patterns
+  - Adds random pauses that mimic reading and engagement
+  - Can run all day in the background like a real user session
+- Use `--safe-mode` for more conservative settings but faster collection
 - Keep collection sessions short (20-30 posts recommended)
 - Space out your collection sessions by several hours
 - Avoid collecting large volumes of data in a short time period

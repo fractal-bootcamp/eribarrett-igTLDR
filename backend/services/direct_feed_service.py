@@ -27,7 +27,8 @@ class DirectFeedService:
         max_delay: int = 10,
         max_retries: int = 3,
         retry_delay: int = 10,
-        batch_size: int = 10
+        batch_size: int = 10,
+        simulate_browsing: bool = False
     ):
         self.client = client
         self.output_dir = Path(output_dir)
@@ -37,6 +38,7 @@ class DirectFeedService:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.batch_size = batch_size
+        self.simulate_browsing = simulate_browsing
         self.processed_posts: set[str] = set()
 
     def _get_random_delay(self) -> float:
@@ -193,6 +195,44 @@ class DirectFeedService:
                 "raw_data": post_data  # Include raw data for debugging
             }
 
+    def _simulate_human_browsing(self) -> None:
+        """
+        Simulate natural human browsing behavior with random long pauses.
+        This mimics a real user who might stop to read content, get distracted,
+        or engage with a post before continuing to scroll.
+        """
+        # 25% chance of a "reading post" pause (5-15 seconds)
+        if random.random() < 0.25:
+            reading_time = random.uniform(5, 15)
+            print(f"Simulating reading a post ({reading_time:.1f}s)...")
+            time.sleep(reading_time)
+            
+        # 15% chance of a "engagement" pause (typing comment, liking, etc.)
+        if random.random() < 0.15:
+            engagement_time = random.uniform(3, 8)
+            print(f"Simulating post engagement ({engagement_time:.1f}s)...")
+            time.sleep(engagement_time)
+            
+        # 10% chance of a "distraction" pause (30-120 seconds)
+        # This simulates user getting a notification or briefly using another app
+        if random.random() < 0.10:
+            distraction_time = random.uniform(30, 120)
+            print(f"Simulating user distraction/pause ({distraction_time:.1f}s)...")
+            time.sleep(distraction_time)
+            
+        # 3% chance of a "long break" (2-10 minutes)
+        # This simulates user putting phone down for a while then coming back
+        if random.random() < 0.03:
+            minutes = random.uniform(2, 10)
+            break_time = minutes * 60
+            print(f"Simulating a longer break ({minutes:.1f} minutes)...")
+            # Break the long pause into smaller chunks to allow ctrl+c interruption
+            chunk_size = 15
+            for _ in range(int(break_time / chunk_size)):
+                time.sleep(chunk_size)
+            time.sleep(break_time % chunk_size)  # Remainder
+            print("Resuming after break...")
+
     def get_feed(self, max_posts: int = 50) -> List[Dict[str, Any]]:
         """
         Get feed posts directly from Instagram's private API.
@@ -209,8 +249,8 @@ class DirectFeedService:
         
         print(f"Fetching up to {max_posts} feed posts with batch size of {self.batch_size}...")
         
-        # Add small initial delay to mimic human behavior
-        initial_delay = random.uniform(1, 3)
+        # Add initial delay to mimic app startup behavior
+        initial_delay = random.uniform(3, 8) if self.simulate_browsing else random.uniform(1, 3)
         print(f"Preparing request (delay: {initial_delay:.1f}s)...")
         time.sleep(initial_delay)
         
@@ -222,7 +262,13 @@ class DirectFeedService:
             try:
                 # Check if we should take a longer break between batches
                 if posts_collected_this_batch >= self.batch_size:
-                    batch_delay = random.uniform(self.max_delay * 1.5, self.max_delay * 2.5)
+                    # Longer break between batches
+                    if self.simulate_browsing:
+                        # In ultra-safe mode, take much longer breaks between batches
+                        batch_delay = random.uniform(self.max_delay * 2, self.max_delay * 4)
+                    else:
+                        batch_delay = random.uniform(self.max_delay * 1.5, self.max_delay * 2.5)
+                        
                     print(f"\nCompleted a batch of {posts_collected_this_batch} posts.")
                     print(f"Taking a longer break between batches ({batch_delay:.1f}s)...")
                     time.sleep(batch_delay)
@@ -274,6 +320,10 @@ class DirectFeedService:
                     posts_in_batch += 1
                     posts_collected_this_batch += 1
                     
+                    # Simulate human browsing behavior after processing each post
+                    if self.simulate_browsing:
+                        self._simulate_human_browsing()
+                    
                     # Save incrementally every batch_size posts to avoid data loss on interruption
                     if len(all_posts) % self.batch_size == 0:
                         self._save_posts(all_posts)
@@ -292,7 +342,7 @@ class DirectFeedService:
                 
                 # Check session duration - if over 10 minutes, warn user about potential risks
                 session_duration = (datetime.now() - session_start).total_seconds() / 60
-                if session_duration > 10 and len(all_posts) > 20:
+                if session_duration > 10 and len(all_posts) > 20 and not self.simulate_browsing:
                     print("\n⚠️ Warning: This session has been running for {:.1f} minutes.".format(session_duration))
                     print("   Long sessions may increase the risk of detection.")
                     print("   Consider stopping (Ctrl+C) and resuming later.\n")
