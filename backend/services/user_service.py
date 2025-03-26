@@ -216,4 +216,89 @@ class UserService:
             if username != usernames[-1]:
                 delay = self._get_random_delay()
                 print(f"Waiting {delay:.1f} seconds before next user...")
-                time.sleep(delay) 
+                time.sleep(delay)
+
+    def get_close_friends(self, username: str) -> List[Dict[str, Any]]:
+        """
+        Get the logged-in user's close friends list.
+        Note: This only works for retrieving your own close friends list, not other users'.
+        
+        Args:
+            username: Your Instagram username (must match the logged-in account)
+        Returns:
+            List of close friends with their details
+        """
+        try:
+            # Get user ID
+            user_id = self.get_user_id_by_username(username)
+            if not user_id:
+                print(f"Could not find user ID for {username}")
+                return []
+            
+            # Check if this is the logged-in user
+            if str(user_id) != str(self.client.user_id):
+                print(f"Warning: You can only view your own close friends list.")
+                print(f"The username {username} does not match your logged-in account.")
+                return []
+            
+            print(f"Fetching close friends for your account @{username} (ID: {user_id})...")
+            
+            # Get close friends list using the private API
+            # This uses an undocumented endpoint that accesses the close friends list
+            result = self.client.private_request(
+                "friendships/besties",
+                {"include_user_count": "true"}
+            )
+            
+            if not result.get("users"):
+                print("No close friends found or unable to access close friends list.")
+                return []
+                
+            # Parse close friends data
+            friends_list = []
+            for user_data in result.get("users", []):
+                # Convert each user to a more readable format
+                try:
+                    friend_data = {
+                        'user_id': str(user_data.get("pk")),
+                        'username': user_data.get("username"),
+                        'full_name': user_data.get("full_name"),
+                        'profile_pic_url': user_data.get("profile_pic_url"),
+                        'is_private': user_data.get("is_private", False),
+                        'is_verified': user_data.get("is_verified", False)
+                    }
+                    friends_list.append(friend_data)
+                except Exception as e:
+                    print(f"Error parsing user data: {e}")
+                    continue
+            
+            # Save to JSON file
+            if friends_list:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = self.output_dir / username / f"close_friends_{timestamp}.json"
+                filename.parent.mkdir(parents=True, exist_ok=True)
+                
+                with open(filename, "w", encoding="utf-8") as f:
+                    json.dump(friends_list, f, indent=2, default=str)
+                print(f"Saved {len(friends_list)} close friends to {filename}")
+            
+            return friends_list
+            
+        except ClientThrottledError:
+            print("Rate limited. Please try again later.")
+            return []
+            
+        except LoginRequired:
+            raise InstagramAuthError("Login required - session expired")
+        
+        except ClientConnectionError:
+            print("Connection error.")
+            return []
+            
+        except ClientError as e:
+            print(f"Instagram client error: {str(e)}")
+            return []
+            
+        except Exception as e:
+            print(f"Unexpected error: {str(e)}")
+            return [] 

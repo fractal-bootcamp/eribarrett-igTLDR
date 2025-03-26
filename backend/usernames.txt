@@ -1,0 +1,7 @@
+# Instagram usernames to collect (one per line)
+# Edit this file to add the usernames you want to collect data from
+instagram
+natgeo
+nike
+apple
+nasa 
