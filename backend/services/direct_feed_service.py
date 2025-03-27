@@ -527,14 +527,24 @@ class DirectFeedService:
                 post_data = self.client.private_request(
                     f"media/{post_code}/info/", {}
                 )
-                return post_data.get("items", [{}])[0]
+                # Check if this is a sponsored post before returning
+                post_item = post_data.get("items", [{}])[0]
+                if self._is_sponsored_post(post_item):
+                    print("Skipping sponsored content...")
+                    return None
+                return post_item
             else:
                 # Method 2: Get post by ID (alternative path)
                 print(f"Loading post details...")
                 post_data = self.client.private_request(
                     f"media/{post_id}/info/", {}
                 )
-                return post_data.get("items", [{}])[0]
+                # Check if this is a sponsored post before returning
+                post_item = post_data.get("items", [{}])[0]
+                if self._is_sponsored_post(post_item):
+                    print("Skipping sponsored content...")
+                    return None
+                return post_item
         
         except Exception as e:
             print(f"Error fetching post info: {e}")
@@ -542,6 +552,60 @@ class DirectFeedService:
             time.sleep(random.uniform(5, 15))
             return None
     
+    def _is_sponsored_post(self, post_data: Dict[str, Any]) -> bool:
+        """
+        Check if a post is sponsored content/advertisement.
+        Instagram uses several indicators for sponsored content.
+        """
+        # Check for direct sponsor indicators
+        if post_data.get("is_ad", False):
+            return True
+            
+        if post_data.get("is_paid_partnership", False):
+            return True
+            
+        # Check for injected ad markers
+        if post_data.get("injected", {}).get("ad_id"):
+            return True
+            
+        if post_data.get("ad_action", "") != "":
+            return True
+            
+        if post_data.get("ad_id"):
+            return True
+            
+        if post_data.get("ad_link_type"):
+            return True
+            
+        # Check for branded content
+        if post_data.get("branded_content_tag_info"):
+            return True
+            
+        # Check for sponsor tags
+        if post_data.get("sponsor_tags") and len(post_data.get("sponsor_tags", [])) > 0:
+            return True
+            
+        # Check for specific ad display context
+        if "ad_display_context" in post_data:
+            return True
+            
+        # Check for commerce promotion
+        if post_data.get("commerce_promotion"):
+            return True
+        
+        # Check for "paid partnership" label
+        if post_data.get("label_type") == "PAID_PARTNERSHIP":
+            return True
+            
+        # Check for shopping info (sometimes indicates promotions)
+        if post_data.get("product_tags") and post_data.get("shopping_product_tags"):
+            # Only consider shopping tags as ads if they're extensive
+            if len(post_data.get("product_tags", {}).get("in", [])) > 3:
+                return True
+        
+        # Not identified as sponsored content
+        return False
+
     def _enrich_post_data(self, post_data: Dict[str, Any], post_id: str, post_code: str, media_type: int) -> Dict[str, Any]:
         """
         Fetch additional details for a post using separate requests.
