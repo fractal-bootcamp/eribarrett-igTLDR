@@ -28,7 +28,8 @@ class DirectFeedService:
         max_retries: int = 3,
         retry_delay: int = 10,
         batch_size: int = 10,
-        simulate_browsing: bool = False
+        simulate_browsing: bool = False,
+        max_posts_per_file: int = 500
     ):
         self.client = client
         self.output_dir = Path(output_dir)
@@ -40,6 +41,20 @@ class DirectFeedService:
         self.batch_size = batch_size
         self.simulate_browsing = simulate_browsing
         self.processed_posts: set[str] = set()
+        self.max_posts_per_file = max_posts_per_file
+        
+        # Session info
+        self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.current_file = None
+        self.posts_in_current_file = 0
+        
+        # Get user info
+        try:
+            self.user_info = self.client.user_info(self.client.user_id)
+            self.username = self.user_info.username
+        except Exception as e:
+            print(f"Error getting user info: {e}")
+            self.username = "unknown_user"
 
     def _get_random_delay(self) -> float:
         """Get a random delay between min_delay and max_delay seconds."""
@@ -52,18 +67,83 @@ class DirectFeedService:
         time.sleep(delay)
 
     def _save_posts(self, posts: List[Dict[str, Any]]) -> None:
-        """Save posts to JSON file."""
+        """
+        Save posts to JSON file. Appends to same file during a session until max_posts_per_file is reached.
+        """
         if not posts:
             print("No posts to save.")
             return
+        
+        # If we don't have a current file or we've reached the max posts per file, create a new one
+        if self.current_file is None or self.posts_in_current_file >= self.max_posts_per_file:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # Include username in the filename
+            filename = self.output_dir / f"{self.username}_feed_posts_{self.session_id}_{timestamp}.json"
             
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = self.output_dir / f"feed_posts_{timestamp}.json"
+            # Initialize the file with metadata
+            metadata = {
+                "collector_info": {
+                    "username": self.username,
+                    "user_id": str(self.client.user_id),
+                    "session_id": self.session_id,
+                    "started_at": timestamp
+                },
+                "posts": []
+            }
+            
+            # Create the directory if it doesn't exist
+            filename.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Write initial file with empty posts array
+            with open(filename, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2, default=str)
+            
+            # Update current file info
+            self.current_file = filename
+            self.posts_in_current_file = 0
+            
+            print(f"\nCreated new feed file: {filename}")
         
-        with open(filename, "w", encoding="utf-8") as f:
-            json.dump(posts, f, indent=2, default=str)
-        
-        print(f"Saved {len(posts)} posts to {filename}")
+        # Now load the current file, append the new posts, and save
+        try:
+            with open(self.current_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            # Append new posts
+            data["posts"].extend(posts)
+            data["last_updated"] = datetime.now().isoformat()
+            data["total_posts"] = len(data["posts"])
+            
+            # Write back to file
+            with open(self.current_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, default=str)
+            
+            # Update count
+            self.posts_in_current_file = len(data["posts"])
+            
+            print(f"Saved {len(posts)} posts to {self.current_file} (Total: {self.posts_in_current_file})")
+            
+        except Exception as e:
+            print(f"Error updating feed file: {e}")
+            # Fallback to creating a new file
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            fallback_file = self.output_dir / f"{self.username}_feed_posts_{self.session_id}_fallback_{timestamp}.json"
+            
+            metadata = {
+                "collector_info": {
+                    "username": self.username,
+                    "user_id": str(self.client.user_id),
+                    "session_id": self.session_id,
+                    "started_at": timestamp,
+                    "error": f"Fallback file created due to error: {str(e)}"
+                },
+                "posts": posts
+            }
+            
+            with open(fallback_file, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2, default=str)
+            
+            print(f"Created fallback file due to error: {fallback_file}")
 
     def _parse_post(self, post_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -110,8 +190,10 @@ class DirectFeedService:
                     "facebook_places_id": loc_data.get("facebook_places_id", "")
                 }
             
-            # Collect image URLs
+            # Collect image URLs and accessibility captions
             images = []
+            accessibility_captions = []
+            
             if media_type == 1:  # Photo
                 if "image_versions2" in post_data:
                     candidates = post_data.get("image_versions2", {}).get("candidates", [])
@@ -121,6 +203,19 @@ class DirectFeedService:
                             "height": img.get("height"),
                             "url": img.get("url")
                         })
+                    
+                    # Check for accessibility caption in image_versions2
+                    accessibility_caption = post_data.get("image_versions2", {}).get("accessibility_caption", "")
+                    if accessibility_caption:
+                        accessibility_captions.append(accessibility_caption)
+                
+                # Also check for top-level accessibility_caption
+                if "accessibility_caption" in post_data and post_data["accessibility_caption"]:
+                    accessibility_captions.append(post_data["accessibility_caption"])
+                
+                # Check for caption_with_translation_aid
+                if "caption_with_translation_aid" in post_data and post_data["caption_with_translation_aid"]:
+                    accessibility_captions.append(post_data["caption_with_translation_aid"])
             
             # Handle carousel/album media
             carousel_media = []
@@ -141,6 +236,17 @@ class DirectFeedService:
                                 "height": img.get("height"),
                                 "url": img.get("url")
                             })
+                    
+                    # Check for accessibility caption in carousel item
+                    if "accessibility_caption" in item and item["accessibility_caption"]:
+                        carousel_item["accessibility_caption"] = item["accessibility_caption"]
+                        accessibility_captions.append(item["accessibility_caption"])
+                    
+                    # Check for accessibility caption in image_versions2 of carousel item
+                    carousel_accessibility = item.get("image_versions2", {}).get("accessibility_caption", "")
+                    if carousel_accessibility:
+                        carousel_item["accessibility_caption"] = carousel_accessibility
+                        accessibility_captions.append(carousel_accessibility)
                     
                     # Videos for carousel item
                     if item.get("media_type") == 2 and "video_versions" in item:
@@ -165,6 +271,10 @@ class DirectFeedService:
                         "url": vid.get("url"),
                         "type": vid.get("type", 0)
                     })
+                
+                # Check for video accessibility captions
+                if "accessibility_caption" in post_data and post_data["accessibility_caption"]:
+                    accessibility_captions.append(post_data["accessibility_caption"])
             
             # Construct structured post object
             structured_post = {
@@ -180,6 +290,7 @@ class DirectFeedService:
                 "images": images,
                 "videos": videos,
                 "carousel_media": carousel_media,
+                "accessibility_captions": accessibility_captions,
                 "is_paid_partnership": post_data.get("is_paid_partnership", False),
                 "has_liked": post_data.get("has_liked", False)
             }
@@ -236,6 +347,7 @@ class DirectFeedService:
     def get_feed(self, max_posts: int = 50) -> List[Dict[str, Any]]:
         """
         Get feed posts directly from Instagram's private API.
+        Uses an ultra-stealthy approach to minimize detection risk.
         
         Args:
             max_posts: Maximum number of posts to fetch (default: 50)
@@ -247,117 +359,126 @@ class DirectFeedService:
         next_max_id = None
         retry_count = 0
         
-        print(f"Fetching up to {max_posts} feed posts with batch size of {self.batch_size}...")
+        print(f"Fetching up to {max_posts} feed posts in ultra-stealthy mode...")
         
-        # Add initial delay to mimic app startup behavior
-        initial_delay = random.uniform(3, 8) if self.simulate_browsing else random.uniform(1, 3)
-        print(f"Preparing request (delay: {initial_delay:.1f}s)...")
+        # Add initial delay with variability to mimic app startup
+        initial_delay = random.uniform(5, 15)  # Longer initial delay
+        print(f"Starting session (initial delay: {initial_delay:.1f}s)...")
         time.sleep(initial_delay)
         
         # Track time between sessions to prevent too many requests
         session_start = datetime.now()
-        posts_collected_this_batch = 0
+        posts_processed_count = 0
         
-        while len(all_posts) < max_posts:
+        # Create file before starting to append incrementally
+        self._initialize_feed_file()
+        
+        # Track post IDs to collect
+        post_ids_to_process = []
+        
+        while posts_processed_count < max_posts:
             try:
-                # Check if we should take a longer break between batches
-                if posts_collected_this_batch >= self.batch_size:
-                    # Longer break between batches
-                    if self.simulate_browsing:
-                        # In ultra-safe mode, take much longer breaks between batches
-                        batch_delay = random.uniform(self.max_delay * 2, self.max_delay * 4)
-                    else:
-                        batch_delay = random.uniform(self.max_delay * 1.5, self.max_delay * 2.5)
-                        
-                    print(f"\nCompleted a batch of {posts_collected_this_batch} posts.")
-                    print(f"Taking a longer break between batches ({batch_delay:.1f}s)...")
-                    time.sleep(batch_delay)
-                    posts_collected_this_batch = 0
-                
-                print(f"Requesting feed posts{' with max_id: ' + next_max_id if next_max_id else ''}...")
-                
-                # Make the direct API request to the timeline feed endpoint
-                feed_response = self.client.private_request(
-                    "feed/timeline/", 
-                    {
-                        "is_pull_to_refresh": "0",
+                # First, we'll just get the minimal feed data with post IDs
+                if not post_ids_to_process:
+                    print(f"Browsing feed to find posts{' with max_id: ' + next_max_id if next_max_id else ''}...")
+                    
+                    # Simulate app interaction
+                    if random.random() < 0.3:  # 30% chance
+                        pre_request_pause = random.uniform(2, 7)
+                        print(f"Opening feed ({pre_request_pause:.1f}s)...")
+                        time.sleep(pre_request_pause)
+                    
+                    # Request just 1-2 posts to find IDs
+                    request_count = random.randint(1, 2)
+                    
+                    # Generate request parameters with slight randomness
+                    request_params = {
+                        "is_pull_to_refresh": "1" if random.random() < 0.3 else "0",
                         "max_id": next_max_id or "",
                         "feed_view_info": "",
                         "is_from_startup": "1" if not next_max_id else "0",
                         "seen_posts": "",
                         "phone_id": self.client.phone_id,
-                        "device_id": self.client.uuid
+                        "device_id": self.client.uuid,
+                        "_uuid": self.client.uuid,
+                        "_csrftoken": self.client.token,
+                        "count": str(request_count)
                     }
-                )
-                
-                # Extract feed items
-                items = feed_response.get("feed_items", [])
-                if not items:
-                    print("No more feed items found.")
-                    break
-                
-                # Save pagination token for next request
-                next_max_id = feed_response.get("next_max_id")
-                
-                # Process feed items
-                posts_in_batch = 0
-                for item in items:
-                    # Check if we have a media item
-                    if "media_or_ad" not in item:
-                        continue
                     
-                    post_data = item["media_or_ad"]
-                    post_id = str(post_data.get("pk", ""))
+                    # Make the direct API request to the timeline feed endpoint
+                    feed_response = self.client.private_request("feed/timeline/", request_params)
                     
-                    # Skip already processed posts
-                    if post_id in self.processed_posts:
-                        continue
-                    
-                    # Parse the post data
-                    parsed_post = self._parse_post(post_data)
-                    all_posts.append(parsed_post)
-                    self.processed_posts.add(post_id)
-                    posts_in_batch += 1
-                    posts_collected_this_batch += 1
-                    
-                    # Simulate human browsing behavior after processing each post
-                    if self.simulate_browsing:
-                        self._simulate_human_browsing()
-                    
-                    # Save incrementally every batch_size posts to avoid data loss on interruption
-                    if len(all_posts) % self.batch_size == 0:
-                        self._save_posts(all_posts)
-                        print(f"Saved progress ({len(all_posts)} posts so far)")
-                    
-                    # Check if we've reached the per-batch limit
-                    if posts_in_batch >= self.batch_size:
-                        print(f"Reached batch limit of {self.batch_size} posts")
+                    # Extract feed items
+                    items = feed_response.get("feed_items", [])
+                    if not items:
+                        print("No more feed items found.")
                         break
+                    
+                    # Save pagination token for next request
+                    next_max_id = feed_response.get("next_max_id")
+                    
+                    # Extract post IDs to process individually
+                    for item in items:
+                        if "media_or_ad" in item:
+                            post_data = item["media_or_ad"]
+                            post_id = str(post_data.get("pk", ""))
+                            
+                            # Skip already processed posts
+                            if post_id in self.processed_posts:
+                                continue
+                                
+                            post_ids_to_process.append({
+                                "id": post_id,
+                                "code": post_data.get("code", ""),
+                                "media_type": post_data.get("media_type", 1)
+                            })
+                    
+                    # Simulate browsing behavior
+                    self._ultra_realistic_browsing()
+                
+                # Process one post ID at a time with natural delays between each step
+                if post_ids_to_process:
+                    post_info = post_ids_to_process.pop(0)
+                    post_id = post_info["id"]
+                    post_code = post_info["code"]
+                    media_type = post_info["media_type"]
+                    
+                    print(f"Looking at post: {post_code}")
+                    
+                    # Get basic post info first - simulates opening a post
+                    post_data = self._fetch_single_post_info(post_id, post_code)
+                    
+                    if post_data:
+                        # Now fetch additional details for this post using separate requests
+                        post_data = self._enrich_post_data(post_data, post_id, post_code, media_type)
                         
-                    # Check if we've reached the total limit
-                    if len(all_posts) >= max_posts:
-                        break
-                
-                print(f"Processed {posts_in_batch} new posts in this batch.")
-                
-                # Check session duration - if over 10 minutes, warn user about potential risks
-                session_duration = (datetime.now() - session_start).total_seconds() / 60
-                if session_duration > 10 and len(all_posts) > 20 and not self.simulate_browsing:
-                    print("\n⚠️ Warning: This session has been running for {:.1f} minutes.".format(session_duration))
-                    print("   Long sessions may increase the risk of detection.")
-                    print("   Consider stopping (Ctrl+C) and resuming later.\n")
-                
-                # Break if we don't have a next page or processed all posts
-                if not next_max_id or len(all_posts) >= max_posts:
+                        # Parse the post data
+                        parsed_post = self._parse_post(post_data)
+                        all_posts.append(parsed_post)
+                        self.processed_posts.add(post_id)
+                        posts_processed_count += 1
+                        
+                        # Save each post immediately
+                        self._append_post_to_file(parsed_post)
+                        print(f"Processed post {posts_processed_count}/{max_posts} (ID: {post_id})")
+                        
+                        # Check if we've reached the total limit
+                        if posts_processed_count >= max_posts:
+                            break
+                    
+                    # Simulate realistic browsing behavior after each post
+                    self._ultra_realistic_browsing()
+                    
+                # If we've processed all post IDs and there's no next page, we're done
+                if not post_ids_to_process and not next_max_id:
                     break
                 
-                # Add delay between requests to avoid rate limiting
-                delay = self._get_random_delay()
-                print(f"Waiting {delay:.1f} seconds before next request...")
-                time.sleep(delay)
-                
-                # Reset retry counter on successful request
-                retry_count = 0
+                # If we've exhausted current batch of post IDs but there are more pages
+                if not post_ids_to_process and next_max_id:
+                    # Natural delay before getting more post IDs
+                    delay = random.uniform(10, 25)
+                    print(f"Scrolling for more posts ({delay:.1f}s)...")
+                    time.sleep(delay)
                 
             except ClientThrottledError:
                 retry_count += 1
@@ -370,24 +491,241 @@ class DirectFeedService:
                 raise InstagramAuthError("Login required - session expired")
             
             except ClientConnectionError:
-                print("Connection error. Retrying...")
-                time.sleep(self.retry_delay)
+                print("Connection error. Taking a break before retry...")
+                time.sleep(random.uniform(30, 60))
                 continue
                 
             except ClientError as e:
                 print(f"Instagram client error: {str(e)}")
-                time.sleep(self.retry_delay)
+                time.sleep(random.uniform(60, 120))
                 continue
                 
             except Exception as e:
                 print(f"Unexpected error: {str(e)}")
-                time.sleep(self.retry_delay)
+                time.sleep(random.uniform(45, 90))
                 continue
         
         print(f"Finished collecting {len(all_posts)} feed posts.")
+        print(f"Data saved to {self.current_file}")
         
-        # Save posts to file
-        if all_posts:
-            self._save_posts(all_posts)
+        return all_posts
+    
+    def _fetch_single_post_info(self, post_id: str, post_code: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetch basic information for a single post.
+        Simulates a user clicking on a post to view details.
+        """
+        try:
+            # Simulate the time it takes to click and load a post
+            click_delay = random.uniform(1, 3)
+            time.sleep(click_delay)
+            
+            # Random pick between two different API endpoints to avoid patterns
+            if random.random() < 0.5:
+                # Method 1: Get post by shortcode (more human-like)
+                print(f"Viewing post content...")
+                post_data = self.client.private_request(
+                    f"media/{post_code}/info/", {}
+                )
+                return post_data.get("items", [{}])[0]
+            else:
+                # Method 2: Get post by ID (alternative path)
+                print(f"Loading post details...")
+                post_data = self.client.private_request(
+                    f"media/{post_id}/info/", {}
+                )
+                return post_data.get("items", [{}])[0]
         
-        return all_posts 
+        except Exception as e:
+            print(f"Error fetching post info: {e}")
+            # Random delay after error
+            time.sleep(random.uniform(5, 15))
+            return None
+    
+    def _enrich_post_data(self, post_data: Dict[str, Any], post_id: str, post_code: str, media_type: int) -> Dict[str, Any]:
+        """
+        Fetch additional details for a post using separate requests.
+        This breaks down post data retrieval into multiple smaller requests.
+        """
+        # Random delay to simulate reading the post
+        view_delay = random.uniform(3, 12)
+        time.sleep(view_delay)
+        
+        try:
+            # 40% chance to check comments (if applicable)
+            if random.random() < 0.4:
+                # Fetch a small number of comments
+                print("Reading comments...")
+                comment_delay = random.uniform(2, 5)
+                time.sleep(comment_delay)
+                
+                try:
+                    comments_data = self.client.private_request(
+                        f"media/{post_id}/comments/", 
+                        {"max_id": "", "count": str(random.randint(1, 3))}
+                    )
+                    # Only store comment count to keep post data small
+                    post_data["comment_count"] = len(comments_data.get("comments", []))
+                except Exception:
+                    # Non-critical failure, continue
+                    pass
+            
+            # 30% chance to check likes
+            if random.random() < 0.3:
+                print("Viewing likes...")
+                like_delay = random.uniform(1, 4)
+                time.sleep(like_delay)
+                
+                try:
+                    # Just check if we've liked the post
+                    liked_status = self.client.private_request(
+                        f"media/{post_id}/has_liked/", {}
+                    )
+                    post_data["has_liked"] = liked_status.get("status", "ok") == "ok"
+                except Exception:
+                    # Non-critical failure, continue
+                    pass
+            
+            # For carousel posts, maybe check individual slides
+            if media_type == 8 and "carousel_media" in post_data and random.random() < 0.4:
+                print("Swiping through carousel...")
+                carousel_delay = random.uniform(2, 6)
+                time.sleep(carousel_delay)
+                
+                # We already have the carousel data, just simulate browsing through it
+                carousel_count = len(post_data.get("carousel_media", []))
+                for i in range(min(carousel_count, random.randint(1, 3))):
+                    slide_view_time = random.uniform(1, 4)
+                    time.sleep(slide_view_time)
+            
+            # 20% chance to check user profile
+            if random.random() < 0.2:
+                print("Checking profile...")
+                profile_delay = random.uniform(3, 8)
+                time.sleep(profile_delay)
+                
+                try:
+                    user_id = post_data.get("user", {}).get("pk")
+                    if user_id:
+                        user_info = self.client.private_request(
+                            f"users/{user_id}/info/", {}
+                        )
+                        # Update user data
+                        if "user" in user_info:
+                            post_data["user"] = user_info["user"]
+                except Exception:
+                    # Non-critical failure, continue
+                    pass
+                    
+            return post_data
+            
+        except Exception as e:
+            print(f"Error enriching post data: {e}")
+            # Non-critical error, return what we have
+            return post_data
+
+    def _ultra_realistic_browsing(self) -> None:
+        """
+        Simulate ultra-realistic human browsing behavior with variable patterns.
+        This mimics a real user's session with natural pauses, interactions, and distractions.
+        """
+        # Simulate normal viewing (100% chance, variable duration)
+        view_time = random.uniform(3, 15)  # Normal post viewing time 3-15 seconds
+        time.sleep(view_time)
+        
+        # Simulate actions with natural probabilities
+        
+        # 35% chance of lingering to read content (higher for text-heavy content)
+        if random.random() < 0.35:
+            reading_time = random.uniform(5, 25)
+            time.sleep(reading_time)
+            
+        # 25% chance of liking behavior (lingering on like button)
+        if random.random() < 0.25:
+            time.sleep(random.uniform(1, 3))
+            
+        # 15% chance of viewing comments
+        if random.random() < 0.15:
+            comment_view_time = random.uniform(3, 12) 
+            time.sleep(comment_view_time)
+            
+        # 8% chance of profile view diversion
+        if random.random() < 0.08:
+            profile_view_time = random.uniform(8, 25)
+            time.sleep(profile_view_time)
+            
+        # 5% chance of longer engagement
+        if random.random() < 0.05:
+            engagement_time = random.uniform(20, 60)
+            time.sleep(engagement_time)
+            
+        # 3% chance of significant distraction (checking other app, notifications, etc)
+        if random.random() < 0.03:
+            distraction_time = random.uniform(45, 120)  # 45s to 2min
+            
+            # Break down long waits for better Ctrl+C handling
+            chunk_size = 10
+            for _ in range(int(distraction_time / chunk_size)):
+                time.sleep(chunk_size)
+            time.sleep(distraction_time % chunk_size)  # Remainder
+    
+    def _initialize_feed_file(self) -> None:
+        """
+        Initialize a new feed file with metadata before starting collection.
+        """
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = self.output_dir / f"{self.username}_feed_posts_{self.session_id}_{timestamp}.json"
+        
+        # Initialize the file with metadata
+        metadata = {
+            "collector_info": {
+                "username": self.username,
+                "user_id": str(self.client.user_id),
+                "session_id": self.session_id,
+                "started_at": timestamp
+            },
+            "posts": []
+        }
+        
+        # Ensure directory exists
+        filename.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Write initial file with empty posts array
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2, default=str)
+        
+        # Set as current file
+        self.current_file = filename
+        self.posts_in_current_file = 0
+        
+        print(f"\nCreated new feed file: {filename}")
+    
+    def _append_post_to_file(self, post: Dict[str, Any]) -> None:
+        """
+        Append a single post to the feed file incrementally.
+        This allows saving data progressively rather than in batches.
+        """
+        if not self.current_file:
+            self._initialize_feed_file()
+            
+        try:
+            # Load current file
+            with open(self.current_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            # Append single post
+            data["posts"].append(post)
+            data["last_updated"] = datetime.now().isoformat()
+            data["total_posts"] = len(data["posts"])
+            
+            # Write back to file
+            with open(self.current_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, default=str)
+            
+            # Update count
+            self.posts_in_current_file = len(data["posts"])
+            
+        except Exception as e:
+            print(f"Error updating feed file: {e}")
+            # Create a recovery file
+            self._create_recovery_file([post]) 

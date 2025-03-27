@@ -1,6 +1,6 @@
 # InstaTLDR Backend
 
-A robust Instagram data collection system using the Instagrapi library.
+A robust Instagram data collection system using the Instagrapi library in conjunction with up-to-date reverse-engineered API endpoints.
 
 ## Setup
 
@@ -26,11 +26,10 @@ The system uses a secure authentication system that saves the session to avoid r
 
 2. If 2FA is enabled, you'll be prompted to enter the code
 
-3. Session will be saved for future use
+3. Session will be saved for future use, avoiding multiple login instances
+
 
 ## Collecting Feed Data
-
-> Note: Feed collection is currently not working reliably due to Instagram API limitations.
 
 To collect your Instagram feed data:
 
@@ -69,7 +68,7 @@ Data will be saved to:
 
 ## Getting Close Friends List
 
-You can get your own close friends list:
+You can get your own close friends list to use as a filter for your daily TLDR:
 
 ```bash
 python scripts/get_close_friends.py
@@ -121,10 +120,10 @@ python scripts/collect_direct_feed.py
 
 When running the script, you'll be presented with an interactive menu to select an operation mode:
 
-- **<span style="color:green">Safe Mode</span>** - Slower collection with better safety (default, recommended)
-- **<span style="color:blue">Ultra-Safe Mode</span>** - Very slow collection with maximum safety
-- **<span style="color:red">Standard Mode</span>** - Faster collection with moderate safety (for burner accounts only)
-- **<span style="color:gray">Custom Mode</span>** - Manually set delay and batch parameters
+- **<span style="color:green">• Safe Mode</span>** - Slower collection with better safety (default, recommended)
+- **<span style="color:blue">• Ultra-Safe Mode</span>** - Very slow collection with maximum safety
+- **<span style="color:red">• Standard Mode</span>** - Faster collection with moderate safety (for burner accounts only)
+- **<span style="color:gray">• Custom Mode</span>** - Manually set delay and batch parameters
 
 Simply use the ↑ and ↓ arrows to navigate, then press Enter to select.
 
@@ -139,6 +138,7 @@ Options:
 - `--safe-mode`: Enable safe mode with longer delays and smaller batches
 - `--ultra-safe-mode`: Enable ultra-safe mode that mimics natural user behavior
 - `--simulate-browsing`: Simulate realistic browsing with random pauses
+- `--max-posts-per-file`: Maximum number of posts to store in a single JSON file (default: 500)
 
 Examples:
 ```bash
@@ -161,6 +161,8 @@ This approach:
 - Provides more detailed post data
 - Includes all media types (photos, videos, albums, etc.)
 - Handles pagination to collect multiple batches of posts
+- Saves data with the logged-in username in the filename
+- Appends posts to the same file during a session (until max limit)
 
 ⚠️ **Safety Recommendations**:
 - Use `--ultra-safe-mode` when account safety is critical - this mode:
@@ -174,7 +176,8 @@ This approach:
 - Space out your collection sessions by several hours
 - Avoid collecting large volumes of data in a short time period
 
-The collected data is saved to JSON files in the specified output directory with timestamps.
+The collected data is saved to JSON files in the specified output directory with the following naming pattern:
+`{username}_feed_posts_{session_id}_{timestamp}.json`
 
 ## Features
 
