@@ -35,6 +35,7 @@ bun run build
 ### Simplified Data Endpoints
 - `GET /api/feed/simple` - Get all posts in simplified format, sorted by score
 - `GET /api/feed/events/simple` - Get only event posts in simplified format, sorted by score
+- `GET /api/feed/priority/:level` - Get posts by priority level (high, medium, low)
 
 ### Simplified Format
 The simplified post format includes:
