@@ -100,7 +100,10 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Collect Instagram feed posts using direct API endpoints")
+    parser = argparse.ArgumentParser(description="Collect Instagram feed posts using direct API endpoints. "
+                                              "Posts are saved to JSON files with the logged-in username and session ID. "
+                                              "During a single session, posts are appended to the same file until the maximum "
+                                              "posts per file limit is reached.")
     parser.add_argument(
         "-n", "--num-posts",
         help="Maximum number of posts to collect (default: 50)",
@@ -144,6 +147,12 @@ def main():
         "--simulate-browsing",
         help="Simulate realistic browsing by adding random long pauses",
         action="store_true"
+    )
+    parser.add_argument(
+        "--max-posts-per-file",
+        help="Maximum number of posts to store in a single JSON file (default: 500)",
+        type=int,
+        default=500
     )
     
     args = parser.parse_args()
@@ -317,7 +326,8 @@ def main():
             min_delay=args.min_delay,
             max_delay=args.max_delay,
             batch_size=args.batch_size,
-            simulate_browsing=args.simulate_browsing
+            simulate_browsing=args.simulate_browsing,
+            max_posts_per_file=args.max_posts_per_file
         )
         
         print(f"Will collect up to {args.num_posts} posts with delays between {args.min_delay}-{args.max_delay} seconds")

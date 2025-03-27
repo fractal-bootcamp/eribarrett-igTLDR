@@ -28,7 +28,8 @@ class DirectFeedService:
         max_retries: int = 3,
         retry_delay: int = 10,
         batch_size: int = 10,
-        simulate_browsing: bool = False
+        simulate_browsing: bool = False,
+        max_posts_per_file: int = 500
     ):
         self.client = client
         self.output_dir = Path(output_dir)
@@ -40,6 +41,20 @@ class DirectFeedService:
         self.batch_size = batch_size
         self.simulate_browsing = simulate_browsing
         self.processed_posts: set[str] = set()
+        self.max_posts_per_file = max_posts_per_file
+        
+        # Session info
+        self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.current_file = None
+        self.posts_in_current_file = 0
+        
+        # Get user info
+        try:
+            self.user_info = self.client.user_info(self.client.user_id)
+            self.username = self.user_info.username
+        except Exception as e:
+            print(f"Error getting user info: {e}")
+            self.username = "unknown_user"
 
     def _get_random_delay(self) -> float:
         """Get a random delay between min_delay and max_delay seconds."""
@@ -52,18 +67,83 @@ class DirectFeedService:
         time.sleep(delay)
 
     def _save_posts(self, posts: List[Dict[str, Any]]) -> None:
-        """Save posts to JSON file."""
+        """
+        Save posts to JSON file. Appends to same file during a session until max_posts_per_file is reached.
+        """
         if not posts:
             print("No posts to save.")
             return
+        
+        # If we don't have a current file or we've reached the max posts per file, create a new one
+        if self.current_file is None or self.posts_in_current_file >= self.max_posts_per_file:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # Include username in the filename
+            filename = self.output_dir / f"{self.username}_feed_posts_{self.session_id}_{timestamp}.json"
             
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = self.output_dir / f"feed_posts_{timestamp}.json"
+            # Initialize the file with metadata
+            metadata = {
+                "collector_info": {
+                    "username": self.username,
+                    "user_id": str(self.client.user_id),
+                    "session_id": self.session_id,
+                    "started_at": timestamp
+                },
+                "posts": []
+            }
+            
+            # Create the directory if it doesn't exist
+            filename.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Write initial file with empty posts array
+            with open(filename, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2, default=str)
+            
+            # Update current file info
+            self.current_file = filename
+            self.posts_in_current_file = 0
+            
+            print(f"\nCreated new feed file: {filename}")
         
-        with open(filename, "w", encoding="utf-8") as f:
-            json.dump(posts, f, indent=2, default=str)
-        
-        print(f"Saved {len(posts)} posts to {filename}")
+        # Now load the current file, append the new posts, and save
+        try:
+            with open(self.current_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            # Append new posts
+            data["posts"].extend(posts)
+            data["last_updated"] = datetime.now().isoformat()
+            data["total_posts"] = len(data["posts"])
+            
+            # Write back to file
+            with open(self.current_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, default=str)
+            
+            # Update count
+            self.posts_in_current_file = len(data["posts"])
+            
+            print(f"Saved {len(posts)} posts to {self.current_file} (Total: {self.posts_in_current_file})")
+            
+        except Exception as e:
+            print(f"Error updating feed file: {e}")
+            # Fallback to creating a new file
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            fallback_file = self.output_dir / f"{self.username}_feed_posts_{self.session_id}_fallback_{timestamp}.json"
+            
+            metadata = {
+                "collector_info": {
+                    "username": self.username,
+                    "user_id": str(self.client.user_id),
+                    "session_id": self.session_id,
+                    "started_at": timestamp,
+                    "error": f"Fallback file created due to error: {str(e)}"
+                },
+                "posts": posts
+            }
+            
+            with open(fallback_file, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2, default=str)
+            
+            print(f"Created fallback file due to error: {fallback_file}")
 
     def _parse_post(self, post_data: Dict[str, Any]) -> Dict[str, Any]:
         """

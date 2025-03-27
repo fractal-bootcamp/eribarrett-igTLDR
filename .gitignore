@@ -68,3 +68,12 @@ session.json
 # Logs
 logs/
 *.log 
+
+# Data directories
+data/
+*/data/
+data*/
+backend/data/
+backend/data*/
+backend/*/data/
+*/data/*/ 
