@@ -174,7 +174,7 @@ def main():
         session_path = Path(__file__).parent.parent / "session.json"
         auth = InstagramAuthenticator(session_file=str(session_path))
         
-        print("\nChecking for existing session...")
+        
         # Try to login with session first
         if auth.login_with_session():
             # Successfully logged in with session
