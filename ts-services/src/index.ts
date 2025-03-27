@@ -11,14 +11,30 @@ const PORT = process.env.PORT || 3001;
 app.use(express.json());
 
 // Helper to create simplified post data
-function simplifyPost(scoredPost: any) {
+function simplifyPost(scoredPost: any, options: { truncateCaption?: boolean, summarize?: boolean } = {}) {
     const { post, score, raw, priority } = scoredPost;
+    
+    // Default options
+    const opts = {
+        truncateCaption: false,
+        summarize: false,
+        ...options
+    };
+    
+    // Generate AI summary for caption if requested
+    let captionSummary = null;
+    if (opts.summarize && post.caption && post.caption.length > 100) {
+        // Very simple summarization logic - could be replaced with a proper AI solution
+        captionSummary = post.caption.substring(0, 100) + "...";
+    }
+    
     return {
         id: post.postId,
         username: raw.user.username,
         isCloseFriend: post.isCloseFriend,
         isVerified: post.isVerified,
-        caption: post.caption?.substring(0, 200) || '',
+        caption: opts.truncateCaption ? (post.caption?.substring(0, 200) || '') : post.caption,
+        captionSummary,
         hasEvent: post.hasEventIndicators || false,
         eventKeywords: post.eventKeywords || [],
         score: score.finalScore,
@@ -116,8 +132,14 @@ app.get('/api/feed/simple', (req, res) => {
         // Sort by score (highest first)
         scoredPosts.sort((a, b) => b.score.finalScore - a.score.finalScore);
         
+        // Get query parameters
+        const truncate = req.query.truncate === 'true';
+        const summarize = req.query.summarize === 'true';
+        
         // Simplify the posts data
-        const simplifiedPosts = scoredPosts.map(simplifyPost);
+        const simplifiedPosts = scoredPosts.map(post => 
+            simplifyPost(post, { truncateCaption: truncate, summarize })
+        );
         
         res.json({
             count: simplifiedPosts.length,
@@ -170,8 +192,14 @@ app.get('/api/feed/events/simple', (req, res) => {
         // Sort by score (highest first)
         eventPosts.sort((a, b) => b.score.finalScore - a.score.finalScore);
         
+        // Get query parameters
+        const truncate = req.query.truncate === 'true';
+        const summarize = req.query.summarize === 'true';
+        
         // Simplify the posts data
-        const simplifiedPosts = eventPosts.map(simplifyPost);
+        const simplifiedPosts = eventPosts.map(post => 
+            simplifyPost(post, { truncateCaption: truncate, summarize })
+        );
         
         res.json({
             count: simplifiedPosts.length,

@@ -190,8 +190,10 @@ class DirectFeedService:
                     "facebook_places_id": loc_data.get("facebook_places_id", "")
                 }
             
-            # Collect image URLs
+            # Collect image URLs and accessibility captions
             images = []
+            accessibility_captions = []
+            
             if media_type == 1:  # Photo
                 if "image_versions2" in post_data:
                     candidates = post_data.get("image_versions2", {}).get("candidates", [])
@@ -201,6 +203,19 @@ class DirectFeedService:
                             "height": img.get("height"),
                             "url": img.get("url")
                         })
+                    
+                    # Check for accessibility caption in image_versions2
+                    accessibility_caption = post_data.get("image_versions2", {}).get("accessibility_caption", "")
+                    if accessibility_caption:
+                        accessibility_captions.append(accessibility_caption)
+                
+                # Also check for top-level accessibility_caption
+                if "accessibility_caption" in post_data and post_data["accessibility_caption"]:
+                    accessibility_captions.append(post_data["accessibility_caption"])
+                
+                # Check for caption_with_translation_aid
+                if "caption_with_translation_aid" in post_data and post_data["caption_with_translation_aid"]:
+                    accessibility_captions.append(post_data["caption_with_translation_aid"])
             
             # Handle carousel/album media
             carousel_media = []
@@ -221,6 +236,17 @@ class DirectFeedService:
                                 "height": img.get("height"),
                                 "url": img.get("url")
                             })
+                    
+                    # Check for accessibility caption in carousel item
+                    if "accessibility_caption" in item and item["accessibility_caption"]:
+                        carousel_item["accessibility_caption"] = item["accessibility_caption"]
+                        accessibility_captions.append(item["accessibility_caption"])
+                    
+                    # Check for accessibility caption in image_versions2 of carousel item
+                    carousel_accessibility = item.get("image_versions2", {}).get("accessibility_caption", "")
+                    if carousel_accessibility:
+                        carousel_item["accessibility_caption"] = carousel_accessibility
+                        accessibility_captions.append(carousel_accessibility)
                     
                     # Videos for carousel item
                     if item.get("media_type") == 2 and "video_versions" in item:
@@ -245,6 +271,10 @@ class DirectFeedService:
                         "url": vid.get("url"),
                         "type": vid.get("type", 0)
                     })
+                
+                # Check for video accessibility captions
+                if "accessibility_caption" in post_data and post_data["accessibility_caption"]:
+                    accessibility_captions.append(post_data["accessibility_caption"])
             
             # Construct structured post object
             structured_post = {
@@ -260,6 +290,7 @@ class DirectFeedService:
                 "images": images,
                 "videos": videos,
                 "carousel_media": carousel_media,
+                "accessibility_captions": accessibility_captions,
                 "is_paid_partnership": post_data.get("is_paid_partnership", False),
                 "has_liked": post_data.get("has_liked", False)
             }
