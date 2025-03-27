@@ -6,20 +6,35 @@ import { Post } from './postScorer.js';
 const PYTHON_DATA_DIR = path.resolve(import.meta.dirname, '../../../backend/data');
 
 export interface RawInstagramPost {
-    id: string;
-    user_id: string;
-    user: {
-        is_verified: boolean;
-        username: string;
-        follower_count?: number;
-    };
-    caption?: {
-        text: string;
-    };
+    post_id: string;
+    shortcode: string;
+    taken_at: string;
+    media_type: string;
     like_count: number;
     comment_count: number;
-    taken_at: number; // Unix timestamp
+    caption?: string;
+    user: {
+        user_id: string;
+        username: string;
+        full_name: string;
+        profile_pic_url: string;
+        is_private: boolean;
+        is_verified: boolean;
+        follower_count?: number;
+    };
+    location: any;
+    images: any[];
     // Add other fields as needed
+}
+
+export interface DirectFeedResponse {
+    collector_info: {
+        username: string;
+        user_id: string;
+        session_id: string;
+        started_at: string;
+    };
+    posts: RawInstagramPost[];
 }
 
 export class DataLoader {
@@ -43,8 +58,11 @@ export class DataLoader {
         
         // Read the most recent file
         const latestFile = files[0];
+        console.log(`Reading feed data file: ${latestFile}`);
         const data = fs.readFileSync(latestFile, 'utf-8');
-        return JSON.parse(data);
+        const feedData = JSON.parse(data) as DirectFeedResponse;
+        
+        return feedData.posts;
     }
     
     /**
@@ -90,17 +108,17 @@ export class DataLoader {
      */
     public convertToPost(rawPost: RawInstagramPost, closeFriends: string[] = []): Post {
         return {
-            postId: rawPost.id,
-            userId: rawPost.user_id,
+            postId: rawPost.post_id,
+            userId: rawPost.user.user_id,
             isCloseFriend: closeFriends.includes(rawPost.user.username),
             isVerified: rawPost.user.is_verified,
-            caption: rawPost.caption?.text,
+            caption: rawPost.caption,
             // Sum likes and comments for total engagement
             engagementCount: rawPost.like_count + rawPost.comment_count,
             // Use follower count if available, or default to a reasonable value
             followerCount: rawPost.user.follower_count || 1000,
-            // Convert Unix timestamp to Date
-            createdAt: new Date(rawPost.taken_at * 1000)
+            // Convert date string to Date object
+            createdAt: new Date(rawPost.taken_at)
         };
     }
 }

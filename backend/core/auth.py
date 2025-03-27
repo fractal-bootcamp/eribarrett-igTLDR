@@ -74,13 +74,35 @@ class InstagramAuthenticator:
             self.client.set_settings(session)
             
             # Try to access timeline to verify session
-            self.client.get_timeline_feed()
-            current_username = self.get_current_username()
-            if current_username:
-                print(f"Success! Logged in as: {current_username}")
-            else:
-                print("Success! Logged in using saved session!")
-            return True
+            try:
+                self.client.get_timeline_feed()
+                current_username = self.get_current_username()
+                if current_username:
+                    print(f"Success! Logged in as: {current_username}")
+                else:
+                    print("Success! Logged in using saved session!")
+                return True
+            except LoginRequired:
+                # Session exists but is invalid, try to refresh it
+                print("Session needs refresh, attempting to refresh...")
+                try:
+                    # Use the same device uuids across logins
+                    old_session = self.client.get_settings()
+                    self.client.set_settings({})
+                    self.client.set_uuids(old_session["uuids"])
+                    
+                    # Try to refresh the session
+                    self.client.get_timeline_feed()
+                    current_username = self.get_current_username()
+                    if current_username:
+                        print(f"Success! Refreshed session for: {current_username}")
+                    else:
+                        print("Success! Refreshed session!")
+                    return True
+                except Exception as e:
+                    print(f"Failed to refresh session: {str(e)}")
+                    return False
+                    
         except Exception as e:
             print(f"Session login failed: {str(e)}")
             return False

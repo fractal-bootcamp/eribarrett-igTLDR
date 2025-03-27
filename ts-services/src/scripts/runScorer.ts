@@ -1,6 +1,24 @@
 import dataLoader from '../services/dataLoader.js';
 import { PostScorer } from '../services/postScorer.js';
 
+// Helper to create simplified post data for console output
+function simplifyPost(scoredPost: any) {
+    const { post, score, rawPost } = scoredPost;
+    return {
+        id: post.postId,
+        username: rawPost.user.username,
+        isCloseFriend: post.isCloseFriend,
+        isVerified: post.isVerified,
+        caption: post.caption?.substring(0, 100) || '',
+        hasEvent: post.hasEventIndicators || false,
+        eventKeywords: post.eventKeywords || [],
+        score: score.finalScore,
+        mediaType: rawPost.media_type,
+        url: `https://instagram.com/p/${rawPost.shortcode}`,
+        timestamp: post.createdAt
+    };
+}
+
 /**
  * This script loads the latest feed data collected by the Python backend,
  * scores all posts, and outputs the results sorted by score.
@@ -30,9 +48,10 @@ async function main() {
         
         // Score all posts
         const scorer = new PostScorer();
-        const scoredPosts = posts.map(post => ({
+        const scoredPosts = posts.map((post, index) => ({
             post,
-            score: scorer.scorePost(post)
+            score: scorer.scorePost(post),
+            rawPost: rawPosts[index]
         }));
         
         // Sort by score (highest first)
@@ -41,17 +60,29 @@ async function main() {
         // Output top 10 highest scored posts
         console.log('\n===== TOP 10 HIGHEST SCORED POSTS =====');
         scoredPosts.slice(0, 10).forEach((item, index) => {
-            const { post, score } = item;
-            console.log(`\n#${index + 1} - Score: ${score.finalScore}`);
-            console.log(`Username: ${rawPosts.find(p => p.id === post.postId)?.user.username}`);
-            console.log(`Close Friend: ${post.isCloseFriend ? 'Yes' : 'No'}`);
-            console.log(`Verified: ${post.isVerified ? 'Yes' : 'No'}`);
-            console.log(`Caption: ${post.caption?.substring(0, 100)}${post.caption && post.caption.length > 100 ? '...' : ''}`);
-            console.log(`Event Indicators: ${post.hasEventIndicators ? 'Yes' : 'No'}`);
-            if (post.eventKeywords && post.eventKeywords.length > 0) {
-                console.log(`Event Keywords: ${post.eventKeywords.join(', ')}`);
+            const simplified = simplifyPost(item);
+            console.log(`\n#${index + 1} - Score: ${simplified.score}`);
+            console.log(`Username: ${simplified.username}`);
+            console.log(`Close Friend: ${simplified.isCloseFriend ? 'Yes' : 'No'}`);
+            console.log(`Verified: ${simplified.isVerified ? 'Yes' : 'No'}`);
+            console.log(`Caption: ${simplified.caption}${simplified.caption && simplified.caption.length === 100 ? '...' : ''}`);
+            console.log(`Has Event: ${simplified.hasEvent ? 'Yes' : 'No'}`);
+            if (simplified.eventKeywords && simplified.eventKeywords.length > 0) {
+                console.log(`Event Keywords: ${simplified.eventKeywords.join(', ')}`);
             }
-            console.log(`Component Scores: ${JSON.stringify(score.componentScores)}`);
+            console.log(`URL: ${simplified.url}`);
+        });
+        
+        // Output event posts
+        const eventPosts = scoredPosts.filter(item => item.post.hasEventIndicators);
+        console.log(`\n\n===== ${eventPosts.length} POSTS WITH EVENTS =====`);
+        eventPosts.forEach((item, index) => {
+            const simplified = simplifyPost(item);
+            console.log(`\n#${index + 1} - Score: ${simplified.score}`);
+            console.log(`Username: ${simplified.username}`);
+            console.log(`Caption: ${simplified.caption}${simplified.caption && simplified.caption.length === 100 ? '...' : ''}`);
+            console.log(`Event Keywords: ${simplified.eventKeywords.join(', ')}`);
+            console.log(`URL: ${simplified.url}`);
         });
         
     } catch (error) {

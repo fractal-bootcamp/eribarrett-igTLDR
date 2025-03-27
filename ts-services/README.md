@@ -28,8 +28,31 @@ bun run build
 
 ## API Endpoints
 
-- `GET /api/feed/scored` - Get all posts scored and sorted by relevance
-- `GET /api/feed/events` - Get posts with event indicators scored and sorted by relevance
+### Full Data Endpoints
+- `GET /api/feed/scored` - Get all posts scored and sorted by relevance (detailed format)
+- `GET /api/feed/events` - Get posts with event indicators scored and sorted by relevance (detailed format)
+
+### Simplified Data Endpoints
+- `GET /api/feed/simple` - Get all posts in simplified format, sorted by score
+- `GET /api/feed/events/simple` - Get only event posts in simplified format, sorted by score
+
+### Simplified Format
+The simplified post format includes:
+```json
+{
+  "id": "post_id",
+  "username": "username",
+  "isCloseFriend": false,
+  "isVerified": false,
+  "caption": "Truncated caption text...",
+  "hasEvent": true,
+  "eventKeywords": ["7:30 PM", "04/15/2025", "RSVP"],
+  "score": 0.815,
+  "mediaType": "photo",
+  "url": "https://instagram.com/p/abc123",
+  "timestamp": "2025-03-26T12:34:56Z"
+}
+```
 
 ## Data Flow
 
@@ -66,5 +89,7 @@ The core of the service is the `PostScorer` class which:
    ```
 
 3. Access the scored feed via the API endpoints:
-   - http://localhost:3001/api/feed/scored
-   - http://localhost:3001/api/feed/events
+   - http://localhost:3001/api/feed/scored (detailed format)
+   - http://localhost:3001/api/feed/simple (simplified format)
+   - http://localhost:3001/api/feed/events (detailed format, events only)
+   - http://localhost:3001/api/feed/events/simple (simplified format, events only)

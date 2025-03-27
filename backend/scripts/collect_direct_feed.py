@@ -33,11 +33,23 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from core.auth import InstagramAuthenticator
 from services.direct_feed_service import DirectFeedService
+from core.exceptions import InstagramAuthError
 
 def signal_handler(signum, frame):
     """Handle Ctrl+C gracefully."""
     print("\nStopping feed collection...")
     sys.exit(0)
+
+def get_credentials() -> tuple[str, str]:
+    """Get Instagram credentials from user."""
+    username = input("Enter your Instagram username: ").strip()
+    password = input("Enter your Instagram password: ").strip()
+    return username, password
+
+def handle_login_retry() -> bool:
+    """Handle login retry prompt."""
+    retry = input("\nWould you like to try logging in again? (y/n): ").strip().lower()
+    return retry == 'y'
 
 # Custom simple interactive menu
 def show_interactive_menu(options, descriptions, default_selection=0):
@@ -157,30 +169,30 @@ def main():
     
     args = parser.parse_args()
     
-    # Apply ultra-safe mode if requested (highest priority)
-    if args.ultra_safe_mode:
-        # Very conservative settings
-        args.min_delay = 15  # Minimum 15 seconds between requests
-        args.max_delay = 45  # Up to 45 seconds between requests
-        args.batch_size = 3  # Only 3 posts per batch
-        args.simulate_browsing = True  # Enable browsing simulation
-        print("\n⚠️ ULTRA-SAFE MODE ENABLED - using extremely conservative settings")
-        print("   This mode mimics natural human browsing with long pauses")
-    # Apply safe mode if requested and ultra-safe not enabled
-    elif args.safe_mode:
-        args.min_delay = max(args.min_delay, 8)  # At least 8 seconds
-        args.max_delay = max(args.max_delay, 15)  # At least 15 seconds
-        args.batch_size = min(args.batch_size, 5)  # Maximum 5 posts per batch
-        print("\n⚠️ Safe mode enabled - using slower and more careful collection")
-    
     try:
-        # Initialize authenticator
-        auth = InstagramAuthenticator()
+        # Initialize authenticator with absolute path to session.json
+        session_path = Path(__file__).parent.parent / "session.json"
+        auth = InstagramAuthenticator(session_file=str(session_path))
         
-        # Check if already logged in
-        if not auth.login_with_session():
-            print("Please login first using main.py")
-            return
+        print("\nChecking for existing session...")
+        # Try to login with session first
+        if auth.login_with_session():
+            # Successfully logged in with session
+            current_user = auth.client.user_info(auth.client.user_id)
+            if current_user:
+                username = current_user.username
+                print(f"\nLogged in as @{username}")
+            else:
+                print("\nLogged in successfully!")
+        else:
+            print("\nNo valid session found. Please login with your credentials.")
+            username, password = get_credentials()
+            if not auth.login(username, password):
+                print("\nLogin failed. Please check your credentials.")
+                if handle_login_retry():
+                    main()
+                return
+            print("\nLogin successful! Session has been saved.")
         
         # Get logged in user info
         current_user = auth.client.user_info(auth.client.user_id)
@@ -343,9 +355,19 @@ def main():
         print(f"\nSuccessfully collected {len(posts)} feed posts")
         print(f"Posts saved to {args.output_dir}")
         
-    except Exception as e:
+    except InstagramAuthError as e:
         print(f"\nError: {str(e)}")
-        sys.exit(1)
+        if handle_login_retry():
+            main()
+        return
+    except KeyboardInterrupt:
+        print("\nOperation cancelled by user.")
+        return
+    except Exception as e:
+        print(f"\nUnexpected error: {str(e)}")
+        if handle_login_retry():
+            main()
+        return
 
 if __name__ == "__main__":
     main() 
