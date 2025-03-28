@@ -12,6 +12,7 @@ import { CalendarPlus, Clock, MapPin, User } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { useAppStore } from "@/lib/store"
 
 interface Event {
   id: string
@@ -34,86 +35,63 @@ export function CalendarView() {
   const [isLoading, setIsLoading] = useState(true)
   const [addedToCalendar, setAddedToCalendar] = useState<Record<string, boolean>>({})
 
-  // Extract events from daily summaries
+  // Get events from global store
+  const { events: storedEvents } = useAppStore();
+
+  // Extract events from stored events only
   useEffect(() => {
     const loadEvents = async () => {
       setIsLoading(true)
       try {
         // Get today's and yesterday's summaries
         const today = new Date()
-        const yesterday = new Date(today)
-        yesterday.setDate(yesterday.getDate() - 1)
-
+        
         let extractedEvents: Event[] = []
         const dates: string[] = []
-
-        try {
-          const todaySummary = await fetchDailySummary(today.toISOString())
-
-          // Process today's highlights
-          if (todaySummary && todaySummary.highlights) {
-            todaySummary.highlights.forEach((highlight) => {
-              try {
-                const event = extractEventFromHighlight(highlight, today)
-                if (event) {
-                  extractedEvents.push(event)
-                  if (!dates.includes(event.date)) {
-                    dates.push(event.date)
-                  }
-                }
-              } catch (error) {
-                console.error("Error extracting event from highlight:", error)
-              }
-            })
-          }
-        } catch (error) {
-          console.error("Error fetching today's summary:", error)
+        
+        // Use events from the global store only
+        if (storedEvents && storedEvents.length > 0) {
+          // Create a map to ensure uniqueness by ID
+          const eventMap = new Map<string, Event>();
+          
+          // Add all stored events to the map
+          storedEvents.forEach(event => {
+            eventMap.set(event.id, {
+              ...event,
+              // Add default values for any missing fields
+              rawText: event.description || ''
+            } as Event);
+          });
+          
+          // Convert map back to array
+          extractedEvents = Array.from(eventMap.values());
+          
+          // Add the dates to our dates array
+          extractedEvents.forEach(event => {
+            if (!dates.includes(event.date)) {
+              dates.push(event.date);
+            }
+          });
+          
+          console.log('Loaded stored events:', extractedEvents.length);
         }
+        
+        // If we have no events from storage, add a default one for demo purposes
+        if (extractedEvents.length === 0) {
+          // Add a specific event for the Wild Yaks show on Friday
+          const fridayDate = new Date(today)
+          // Find the next Friday
+          const daysUntilFriday = (5 - fridayDate.getDay() + 7) % 7
+          fridayDate.setDate(fridayDate.getDate() + daysUntilFriday)
+          const fridayStr = fridayDate.toISOString().split("T")[0]
 
-        try {
-          const yesterdaySummary = await fetchDailySummary(yesterday.toISOString())
-
-          // Process yesterday's highlights
-          if (yesterdaySummary && yesterdaySummary.highlights) {
-            yesterdaySummary.highlights.forEach((highlight) => {
-              try {
-                const event = extractEventFromHighlight(highlight, yesterday)
-                if (event) {
-                  extractedEvents.push(event)
-                  if (!dates.includes(event.date)) {
-                    dates.push(event.date)
-                  }
-                }
-              } catch (error) {
-                console.error("Error extracting event from highlight:", error)
-              }
-            })
-          }
-        } catch (error) {
-          console.error("Error fetching yesterday's summary:", error)
-        }
-
-        // Add a specific event for the Wild Yaks show on Friday
-        const fridayDate = new Date(today)
-        // Find the next Friday
-        const daysUntilFriday = (5 - fridayDate.getDay() + 7) % 7
-        fridayDate.setDate(fridayDate.getDate() + daysUntilFriday)
-        const fridayStr = fridayDate.toISOString().split("T")[0]
-
-        // Only add the Wild Yaks event if we don't already have it
-        const hasWildYaksEvent = extractedEvents.some(
-          (event) => event.username === "wildyaks" && event.date === fridayStr,
-        )
-
-        if (!hasWildYaksEvent) {
           const wildYaksEvent: Event = {
             id: "wild-yaks-event",
             title: "Wild Yaks Live Show",
             date: fridayStr,
             username: "wildyaks",
             type: "Concert",
-            description:
-              "Join Wild Yaks for their album release party! Special guests and exclusive merchandise available.",
+            description: "Join Wild Yaks for their album release party! Special guests and exclusive merchandise available.",
             location: "The Venue, 123 Music St, Brooklyn, NY",
             startTime: "20:00",
             endTime: "23:00",
@@ -126,59 +104,6 @@ export function CalendarView() {
           }
         }
 
-        // Add some more sample events for the next few weeks
-        const nextWeek = new Date(today)
-        nextWeek.setDate(nextWeek.getDate() + 7)
-        const nextWeekStr = nextWeek.toISOString().split("T")[0]
-
-        const twoWeeks = new Date(today)
-        twoWeeks.setDate(twoWeeks.getDate() + 14)
-        const twoWeeksStr = twoWeeks.toISOString().split("T")[0]
-
-        const threeWeeks = new Date(today)
-        threeWeeks.setDate(threeWeeks.getDate() + 21)
-        const threeWeeksStr = threeWeeks.toISOString().split("T")[0]
-
-        const additionalEvents = [
-          {
-            id: "art-exhibition",
-            title: "Modern Art Exhibition",
-            date: nextWeekStr,
-            username: "artdaily",
-            type: "Exhibition",
-            description: "Featuring works from emerging artists in the contemporary scene.",
-            location: "Modern Gallery, New York",
-            startTime: "10:00",
-            endTime: "18:00",
-            rawText: "showcased a new exhibition opening next week at Modern Gallery",
-          },
-          {
-            id: "book-club",
-            title: "Monthly Book Club Meeting",
-            date: twoWeeksStr,
-            username: "bookclub",
-            type: "Meeting",
-            description: "Discussion of this month's selected book with the author.",
-            location: "City Library, Main Branch",
-            startTime: "19:00",
-            endTime: "21:00",
-            rawText: "announced their book of the month meeting at City Library",
-          },
-          {
-            id: "fitness-challenge",
-            title: "30-Day Fitness Challenge",
-            date: threeWeeksStr,
-            username: "fitnesscoach",
-            type: "Challenge",
-            description: "Join the community for a 30-day fitness transformation.",
-            startTime: "08:00",
-            rawText: "posted a 30-day challenge starting next Monday at 8am",
-          },
-        ]
-
-        extractedEvents = [...extractedEvents, ...additionalEvents]
-        dates.push(nextWeekStr, twoWeeksStr, threeWeeksStr)
-
         setEvents(extractedEvents)
         setEventDates(dates)
 
@@ -186,37 +111,15 @@ export function CalendarView() {
         updateSelectedDayEvents(date, extractedEvents)
       } catch (error) {
         console.error("Error loading events:", error)
-        // Fallback to just showing the Wild Yaks event
-        const today = new Date()
-        const fridayDate = new Date(today)
-        const daysUntilFriday = (5 - fridayDate.getDay() + 7) % 7
-        fridayDate.setDate(fridayDate.getDate() + daysUntilFriday)
-        const fridayStr = fridayDate.toISOString().split("T")[0]
-
-        const wildYaksEvent: Event = {
-          id: "wild-yaks-event",
-          title: "Wild Yaks Live Show",
-          date: fridayStr,
-          username: "wildyaks",
-          type: "Concert",
-          description:
-            "Join Wild Yaks for their album release party! Special guests and exclusive merchandise available.",
-          location: "The Venue, 123 Music St, Brooklyn, NY",
-          startTime: "20:00",
-          endTime: "23:00",
-          rawText: "have a show on Friday at The Venue",
-        }
-
-        setEvents([wildYaksEvent])
-        setEventDates([fridayStr])
-        updateSelectedDayEvents(date, [wildYaksEvent])
+        setEvents([])
+        setEventDates([])
       } finally {
         setIsLoading(false)
       }
     }
 
     loadEvents()
-  }, [])
+  }, [storedEvents, date])
 
   useEffect(() => {
     if (events.length > 0) {
@@ -330,13 +233,13 @@ export function CalendarView() {
                 mode="single"
                 selected={date}
                 onSelect={handleDateSelect}
-                className="rounded-md"
+                className="rounded-md w-full"
                 modifiers={{
                   event: (date) => isDateWithEvent(date),
                 }}
                 modifiersClassNames={{
                   event:
-                    "font-bold relative before:absolute before:top-0 before:right-0 before:h-2 before:w-2 before:rounded-full before:bg-primary",
+                    "font-bold relative before:absolute before:top-1 before:right-1 before:h-2 before:w-2 before:rounded-full before:bg-primary",
                 }}
               />
             </div>

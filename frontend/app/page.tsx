@@ -5,6 +5,7 @@ import { CalendarView } from "@/components/calendar-view"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import { DailySummaryClient } from "@/components/daily-summary-client"
+import { InstagramSummary } from "@/components/instagram-summary"
 
 export default function Home() {
   return (
@@ -16,28 +17,28 @@ export default function Home() {
         </header>
 
         <Tabs defaultValue="summary" className="w-full">
-          <TabsList className="mb-6">
-            <TabsTrigger value="summary">Daily Feed</TabsTrigger>
-            <TabsTrigger value="calendar">Calendar</TabsTrigger>
-            <TabsTrigger value="settings">Settings</TabsTrigger>
-          </TabsList>
+          {/* <TabsList className="mb-6">
+            <TabsTrigger value="summary">Daily Feed</TabsTrigger> */}
+          {/* <TabsTrigger value="calendar">Calendar</TabsTrigger>
+            <TabsTrigger value="settings">Settings</TabsTrigger> */}
+          {/* </TabsList> */}
 
           <TabsContent value="summary" className="space-y-6">
             <Suspense fallback={<Skeleton className="h-[400px] w-full" />}>
-              <DailySummaryClient date={new Date().toISOString()} />
+              <InstagramSummary refreshInterval={60000} maxItems={5} />
             </Suspense>
             <Suspense fallback={<Skeleton className="h-[400px] w-full" />}>
               <DailySummaryClient date={new Date(Date.now() - 86400000).toISOString()} />
             </Suspense>
           </TabsContent>
 
-          <TabsContent value="calendar">
+          {/* <TabsContent value="calendar">
             <CalendarView />
           </TabsContent>
 
           <TabsContent value="settings">
             <CookieManager />
-          </TabsContent>
+          </TabsContent> */}
         </Tabs>
       </div>
     </main>

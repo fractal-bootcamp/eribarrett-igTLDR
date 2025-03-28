@@ -2,8 +2,11 @@ import fs from 'fs';
 import path from 'path';
 import { Post } from './postScorer.js';
 
+// Import utility functions
+import { Paths } from './utils.js';
+
 // Path to Python backend data directory
-const PYTHON_DATA_DIR = path.resolve(import.meta.dirname, '../../../backend/data');
+const PYTHON_DATA_DIR = Paths.PYTHON_DATA_DIR;
 
 export interface RawInstagramPost {
     post_id: string;
@@ -42,46 +45,73 @@ export class DataLoader {
      * Loads the most recent direct feed data file
      */
     public loadLatestDirectFeed(): RawInstagramPost[] {
-        const directFeedDir = path.join(PYTHON_DATA_DIR, 'direct_feed');
-        
-        // Get all JSON files and sort by modification time (newest first)
-        const files = fs.readdirSync(directFeedDir)
-            .filter(file => file.endsWith('.json'))
-            .map(file => path.join(directFeedDir, file))
-            .sort((a, b) => {
-                return fs.statSync(b).mtime.getTime() - fs.statSync(a).mtime.getTime();
-            });
-            
-        if (files.length === 0) {
-            throw new Error('No direct feed data files found');
+        try {
+            console.log("Starting to load latest direct feed...");
+            const directFeedDir = path.join(PYTHON_DATA_DIR, 'direct_feed');
+            console.log(`PYTHON_DATA_DIR: ${PYTHON_DATA_DIR}`);
+            console.log(`Looking for files in: ${directFeedDir}`);
+
+            // Check if directory exists
+            if (!fs.existsSync(directFeedDir)) {
+                console.error(`Directory does not exist: ${directFeedDir}`);
+                throw new Error(`Directory not found: ${directFeedDir}`);
+            }
+
+            // Get all JSON files and sort by modification time (newest first)
+            const allFiles = fs.readdirSync(directFeedDir);
+            console.log(`All files in directory: ${allFiles.join(', ')}`);
+
+            const files = allFiles
+                .filter(file => file.endsWith('.json'))
+                .map(file => path.join(directFeedDir, file))
+                .sort((a, b) => {
+                    return fs.statSync(b).mtime.getTime() - fs.statSync(a).mtime.getTime();
+                });
+
+            console.log(`JSON files found (sorted): ${files.map(f => path.basename(f)).join(', ')}`);
+
+            if (files.length === 0) {
+                throw new Error('No direct feed data files found');
+            }
+
+            // Read the most recent file
+            const latestFile = files[0];
+            console.log(`Reading feed data file: ${latestFile}`);
+            const data = fs.readFileSync(latestFile, 'utf-8');
+            console.log(`File size: ${data.length} bytes`);
+
+            try {
+                const feedData = JSON.parse(data) as DirectFeedResponse;
+                console.log(`Posts found in file: ${feedData.posts?.length || 0}`);
+                return feedData.posts;
+            } catch (parseError) {
+                console.error(`Error parsing JSON data: ${parseError}`);
+                throw new Error(`Invalid JSON data in file: ${latestFile}`);
+            }
+        } catch (error) {
+            console.error("ERROR IN loadLatestDirectFeed:", error);
+            console.error("Stack trace:", (error as Error).stack);
+            return []; // Return empty array on error
         }
-        
-        // Read the most recent file
-        const latestFile = files[0];
-        console.log(`Reading feed data file: ${latestFile}`);
-        const data = fs.readFileSync(latestFile, 'utf-8');
-        const feedData = JSON.parse(data) as DirectFeedResponse;
-        
-        return feedData.posts;
     }
-    
+
     /**
      * Get close friends data for a specific user
      */
     public getCloseFriends(username: string): string[] {
         try {
             const closeFriendsPath = path.join(
-                PYTHON_DATA_DIR, 
-                'userMedia', 
-                username, 
+                PYTHON_DATA_DIR,
+                'userMedia',
+                username,
                 'close_friends_latest.json'
             );
-            
+
             if (fs.existsSync(closeFriendsPath)) {
                 const data = fs.readFileSync(closeFriendsPath, 'utf-8');
                 return JSON.parse(data);
             }
-            
+
             // Alternative: look for date-named files if latest doesn't exist
             const userDir = path.join(PYTHON_DATA_DIR, 'userMedia', username);
             if (fs.existsSync(userDir)) {
@@ -89,20 +119,20 @@ export class DataLoader {
                     .filter(file => file.startsWith('close_friends_') && file.endsWith('.json'))
                     .sort()
                     .reverse();
-                    
+
                 if (files.length > 0) {
                     const data = fs.readFileSync(path.join(userDir, files[0]), 'utf-8');
                     return JSON.parse(data);
                 }
             }
-            
+
             return []; // No close friends data found
         } catch (error) {
             console.error(`Error loading close friends for ${username}:`, error);
             return [];
         }
     }
-    
+
     /**
      * Convert raw Instagram post data to our Post format
      */
