@@ -510,48 +510,299 @@ class DirectFeedService:
         
         return all_posts
     
+    def _initialize_client_settings(self):
+        """
+        Update client settings to improve compatibility with Instagram API changes.
+        """
+        try:
+            # Try to update the client user agent to a newer version
+            # Instagram frequently updates API endpoints between versions
+            self.client.user_agent = "Instagram 248.0.0.17.109 Android (30/11; 480dpi; 1080x2158; OnePlus; GM1917; OnePlus7Pro; qcom; en_US; 385018104)"
+            
+            # Enable automatic retries for API calls
+            if hasattr(self.client, 'set_retry_delay'):
+                self.client.set_retry_delay(True)
+            
+            print("Client settings initialized with updated user agent")
+        except Exception as e:
+            print(f"Warning: Could not update client settings: {e}")
+
     def _fetch_single_post_info(self, post_id: str, post_code: str) -> Optional[Dict[str, Any]]:
         """
-        Fetch basic information for a single post.
-        Simulates a user clicking on a post to view details.
+        Fetch basic information for a single post using multiple different methods and APIs.
+        Includes fallbacks for handling 404 errors with certain endpoints.
         """
+        # Initialize client settings if not already done
+        if not hasattr(self, '_client_settings_initialized'):
+            self._initialize_client_settings()
+            self._client_settings_initialized = True
+        
         try:
             # Simulate the time it takes to click and load a post
             click_delay = random.uniform(1, 3)
             time.sleep(click_delay)
             
-            # Random pick between two different API endpoints to avoid patterns
-            if random.random() < 0.5:
-                # Method 1: Get post by shortcode (more human-like)
-                print(f"Viewing post content...")
-                post_data = self.client.private_request(
-                    f"media/{post_code}/info/", {}
-                )
-                return post_data.get("items", [{}])[0]
-            else:
-                # Method 2: Get post by ID (alternative path)
-                print(f"Loading post details...")
+            print(f"Viewing post content...")
+            
+            # Method 1: Try Instagram mobile API with post ID
+            try:
                 post_data = self.client.private_request(
                     f"media/{post_id}/info/", {}
                 )
-                return post_data.get("items", [{}])[0]
-        
+                
+                # Check response validity
+                if post_data and "items" in post_data and post_data["items"]:
+                    post_item = post_data.get("items", [{}])[0]
+                    if self._is_sponsored_post(post_item):
+                        print("Skipping sponsored content...")
+                        return None
+                    
+                    self._check_accessibility_captions(post_item)
+                    return post_item
+            except Exception as e:
+                print(f"Standard API failed: {e}")
+            
+            # Method 2: Try with a newer graph API endpoint
+            try:
+                print("Trying newer Graph API endpoint...")
+                # This endpoint format is more resilient to API changes
+                post_data = self.client.private_request(
+                    f"api/v1/media/{post_code}/info/", {}
+                )
+                
+                if post_data and "items" in post_data and post_data["items"]:
+                    post_item = post_data.get("items", [{}])[0]
+                    if self._is_sponsored_post(post_item):
+                        print("Skipping sponsored content...")
+                        return None
+                    
+                    self._check_accessibility_captions(post_item)
+                    return post_item
+            except Exception as e:
+                print(f"Graph API failed: {e}")
+            
+            # Method 3: Try using web API which might be more stable
+            try:
+                print("Trying Web API...")
+                user_info = self.client.public_request(
+                    f"p/{post_code}/",
+                    params={"__a": "1", "__d": "dis"}
+                )
+                
+                # Web API returns different structure
+                if user_info and "graphql" in user_info:
+                    media_info = user_info["graphql"]["shortcode_media"]
+                    return self._convert_web_to_api_format(media_info, post_code)
+            except Exception as e:
+                print(f"Web API failed: {e}")
+            
+            # Method 4: Try using instagrapi's built-in methods if available
+            try:
+                print("Trying instagrapi's built-in methods...")
+                if hasattr(self.client, 'media_info_by_code'):
+                    media_info = self.client.media_info_by_code(post_code)
+                    return media_info.dict()
+            except Exception as e:
+                print(f"Built-in method failed: {e}")
+            
+            # All methods failed
+            print(f"All methods failed to retrieve post. Media ID format may have changed.")
+            return None
+            
         except Exception as e:
             print(f"Error fetching post info: {e}")
-            # Random delay after error
+            # Random delay after error to prevent rate limiting
             time.sleep(random.uniform(5, 15))
             return None
     
+    def _convert_web_to_api_format(self, web_media: Dict[str, Any], shortcode: str) -> Dict[str, Any]:
+        """
+        Convert web API format to match mobile API format for consistent processing.
+        """
+        try:
+            # Create a basic object structure that matches the API response
+            api_format = {
+                "id": web_media.get("id", ""),
+                "code": shortcode,
+                "taken_at": web_media.get("taken_at_timestamp", int(time.time())),
+                "media_type": 1,  # Default to photo
+                "user": {
+                    "pk": web_media.get("owner", {}).get("id", ""),
+                    "username": web_media.get("owner", {}).get("username", ""),
+                    "full_name": web_media.get("owner", {}).get("full_name", ""),
+                    "is_private": web_media.get("owner", {}).get("is_private", False),
+                    "is_verified": web_media.get("owner", {}).get("is_verified", False),
+                    "profile_pic_url": web_media.get("owner", {}).get("profile_pic_url", ""),
+                },
+                "caption": {
+                    "text": web_media.get("edge_media_to_caption", {}).get("edges", [{}])[0].get("node", {}).get("text", "") if web_media.get("edge_media_to_caption", {}).get("edges") else ""
+                },
+                "image_versions2": {
+                    "candidates": [
+                        {
+                            "width": web_media.get("dimensions", {}).get("width", 1080),
+                            "height": web_media.get("dimensions", {}).get("height", 1080),
+                            "url": web_media.get("display_url", "")
+                        }
+                    ],
+                    "accessibility_caption": web_media.get("accessibility_caption", "")
+                },
+                "like_count": web_media.get("edge_media_preview_like", {}).get("count", 0),
+                "comment_count": web_media.get("edge_media_to_comment", {}).get("count", 0),
+                "accessibility_caption": web_media.get("accessibility_caption", "")
+            }
+            
+            # Set media_type based on __typename
+            if web_media.get("__typename") == "GraphVideo":
+                api_format["media_type"] = 2
+                api_format["video_url"] = web_media.get("video_url", "")
+            elif web_media.get("__typename") == "GraphSidecar":
+                api_format["media_type"] = 8
+                
+                # Convert carousel items
+                if "edge_sidecar_to_children" in web_media:
+                    api_format["carousel_media"] = []
+                    for edge in web_media["edge_sidecar_to_children"]["edges"]:
+                        node = edge["node"]
+                        carousel_item = {
+                            "id": node.get("id", ""),
+                            "media_type": 2 if node.get("__typename") == "GraphVideo" else 1,
+                            "image_versions2": {
+                                "candidates": [
+                                    {
+                                        "width": node.get("dimensions", {}).get("width", 1080),
+                                        "height": node.get("dimensions", {}).get("height", 1080),
+                                        "url": node.get("display_url", "")
+                                    }
+                                ],
+                                "accessibility_caption": node.get("accessibility_caption", "")
+                            },
+                            "accessibility_caption": node.get("accessibility_caption", "")
+                        }
+                        
+                        # Add video URL if it's a video
+                        if node.get("__typename") == "GraphVideo":
+                            carousel_item["video_url"] = node.get("video_url", "")
+                            
+                        api_format["carousel_media"].append(carousel_item)
+            
+            return api_format
+            
+        except Exception as e:
+            print(f"Error converting web format to API format: {e}")
+            # Return the original data as a fallback
+            return web_media
+
+    def _check_accessibility_captions(self, post_data: Dict[str, Any]) -> None:
+        """
+        Check for accessibility captions in a post and log their presence.
+        This helps verify we're capturing AI-generated descriptions.
+        """
+        has_accessibility = False
+        
+        # Check top-level accessibility caption
+        if "accessibility_caption" in post_data:
+            print("Found top-level accessibility caption")
+            has_accessibility = True
+            
+        # Check image_versions2 for accessibility caption
+        if "image_versions2" in post_data and "accessibility_caption" in post_data.get("image_versions2", {}):
+            print("Found image_versions2 accessibility caption")
+            has_accessibility = True
+            
+        # Check caption_with_translation_aid
+        if "caption_with_translation_aid" in post_data:
+            print("Found caption_with_translation_aid")
+            has_accessibility = True
+            
+        # Check for carousel media accessibility captions
+        if "carousel_media" in post_data:
+            for idx, item in enumerate(post_data.get("carousel_media", [])):
+                if "accessibility_caption" in item:
+                    print(f"Found accessibility caption in carousel item {idx+1}")
+                    has_accessibility = True
+                    
+                if "image_versions2" in item and "accessibility_caption" in item.get("image_versions2", {}):
+                    print(f"Found image_versions2 accessibility caption in carousel item {idx+1}")
+                    has_accessibility = True
+        
+        # Log summary
+        if has_accessibility:
+            print("✓ Post contains AI-generated descriptions")
+        else:
+            print("× No AI-generated descriptions found in this post")
+
+    def _is_sponsored_post(self, post_data: Dict[str, Any]) -> bool:
+        """
+        Check if a post is sponsored content/advertisement.
+        Instagram uses several indicators for sponsored content.
+        """
+        # Check for direct sponsor indicators
+        if post_data.get("is_ad", False):
+            return True
+            
+        if post_data.get("is_paid_partnership", False):
+            return True
+            
+        # Check for injected ad markers
+        if post_data.get("injected", {}).get("ad_id"):
+            return True
+            
+        if post_data.get("ad_action", "") != "":
+            return True
+            
+        if post_data.get("ad_id"):
+            return True
+            
+        if post_data.get("ad_link_type"):
+            return True
+            
+        # Check for branded content
+        if post_data.get("branded_content_tag_info"):
+            return True
+            
+        # Check for sponsor tags
+        if post_data.get("sponsor_tags") and len(post_data.get("sponsor_tags", [])) > 0:
+            return True
+            
+        # Check for specific ad display context
+        if "ad_display_context" in post_data:
+            return True
+            
+        # Check for commerce promotion
+        if post_data.get("commerce_promotion"):
+            return True
+        
+        # Check for "paid partnership" label
+        if post_data.get("label_type") == "PAID_PARTNERSHIP":
+            return True
+            
+        # Check for shopping info (sometimes indicates promotions)
+        if post_data.get("product_tags") and post_data.get("shopping_product_tags"):
+            # Only consider shopping tags as ads if they're extensive
+            if len(post_data.get("product_tags", {}).get("in", [])) > 3:
+                return True
+        
+        # Not identified as sponsored content
+        return False
+
     def _enrich_post_data(self, post_data: Dict[str, Any], post_id: str, post_code: str, media_type: int) -> Dict[str, Any]:
         """
         Fetch additional details for a post using separate requests.
-        This breaks down post data retrieval into multiple smaller requests.
+        Adapts to API changes with multiple fallback methods.
         """
         # Random delay to simulate reading the post
         view_delay = random.uniform(3, 12)
         time.sleep(view_delay)
         
         try:
+            # Try to get a valid numeric ID for API calls if not already available
+            numeric_id = post_id
+            if not post_id.isdigit():
+                numeric_id_from_shortcode = self._shortcode_to_media_id(post_code)
+                if numeric_id_from_shortcode:
+                    numeric_id = numeric_id_from_shortcode
+            
             # 40% chance to check comments (if applicable)
             if random.random() < 0.4:
                 # Fetch a small number of comments
@@ -560,13 +811,56 @@ class DirectFeedService:
                 time.sleep(comment_delay)
                 
                 try:
-                    comments_data = self.client.private_request(
-                        f"media/{post_id}/comments/", 
-                        {"max_id": "", "count": str(random.randint(1, 3))}
-                    )
-                    # Only store comment count to keep post data small
-                    post_data["comment_count"] = len(comments_data.get("comments", []))
-                except Exception:
+                    # Try multiple comment-fetching endpoints for resilience
+                    comments_data = None
+                    comment_count = 0
+                    
+                    # Method 1: Standard API
+                    try:
+                        comments_data = self.client.private_request(
+                            f"media/{numeric_id}/comments/", 
+                            {"max_id": "", "count": str(random.randint(1, 3))}
+                        )
+                        if comments_data and "comments" in comments_data:
+                            comment_count = len(comments_data.get("comments", []))
+                    except Exception as e:
+                        print(f"Standard comment API failed: {e}")
+                    
+                    # Method 2: Web API
+                    if not comments_data or "comments" not in comments_data:
+                        try:
+                            comments_data = self.client.public_request(
+                                f"graphql/query/", 
+                                params={
+                                    "query_hash": "bc3296d1ce80a24b1b6e40b1e72903f5",
+                                    "variables": json.dumps({"shortcode": post_code, "first": 3})
+                                }
+                            )
+                            if comments_data and "data" in comments_data:
+                                edge_comments = comments_data.get("data", {}).get("shortcode_media", {}).get("edge_media_to_comment", {})
+                                if "edges" in edge_comments:
+                                    comment_count = len(edge_comments.get("edges", []))
+                        except Exception as e:
+                            print(f"Web comment API failed: {e}")
+                    
+                    # Method 3: API v1
+                    if not comment_count:
+                        try:
+                            comments_data = self.client.private_request(
+                                f"api/v1/media/{post_code}/comments/", 
+                                {"max_id": "", "count": str(random.randint(1, 3))}
+                            )
+                            if comments_data and "comments" in comments_data:
+                                comment_count = len(comments_data.get("comments", []))
+                        except Exception as e:
+                            print(f"V1 comment API failed: {e}")
+                    
+                    # Save the comment count to the post data
+                    if comment_count:
+                        post_data["comment_count"] = comment_count
+                    
+                except Exception as e:
+                    print(f"Could not fetch comments: {e}")
                     # Non-critical failure, continue
                     pass
             
@@ -576,52 +870,103 @@ class DirectFeedService:
                 like_delay = random.uniform(1, 4)
                 time.sleep(like_delay)
                 
+                like_count = 0
                 try:
-                    # Just check if we've liked the post
-                    liked_status = self.client.private_request(
-                        f"media/{post_id}/has_liked/", {}
-                    )
-                    post_data["has_liked"] = liked_status.get("status", "ok") == "ok"
-                except Exception:
-                    # Non-critical failure, continue
-                    pass
-            
-            # For carousel posts, maybe check individual slides
-            if media_type == 8 and "carousel_media" in post_data and random.random() < 0.4:
-                print("Swiping through carousel...")
-                carousel_delay = random.uniform(2, 6)
-                time.sleep(carousel_delay)
-                
-                # We already have the carousel data, just simulate browsing through it
-                carousel_count = len(post_data.get("carousel_media", []))
-                for i in range(min(carousel_count, random.randint(1, 3))):
-                    slide_view_time = random.uniform(1, 4)
-                    time.sleep(slide_view_time)
-            
-            # 20% chance to check user profile
-            if random.random() < 0.2:
-                print("Checking profile...")
-                profile_delay = random.uniform(3, 8)
-                time.sleep(profile_delay)
-                
-                try:
-                    user_id = post_data.get("user", {}).get("pk")
-                    if user_id:
-                        user_info = self.client.private_request(
-                            f"users/{user_id}/info/", {}
-                        )
-                        # Update user data
-                        if "user" in user_info:
-                            post_data["user"] = user_info["user"]
-                except Exception:
-                    # Non-critical failure, continue
-                    pass
+                    # Try multiple like-fetching methods
                     
+                    # Method 1: Direct like count
+                    try:
+                        like_data = self.client.private_request(
+                            f"media/{numeric_id}/like_count/", {}
+                        )
+                        if like_data and "like_count" in like_data:
+                            like_count = like_data.get("like_count", 0)
+                            post_data["like_count"] = like_count
+                            post_data["has_liked"] = like_data.get("user_likes", False)
+                    except Exception as e:
+                        print(f"Like count API failed: {e}")
+                    
+                    # Method 2: Web API
+                    if not like_count:
+                        try:
+                            like_data = self.client.public_request(
+                                f"p/{post_code}/",
+                                params={"__a": "1", "__d": "dis"}
+                            )
+                            if like_data and "graphql" in like_data:
+                                edge_likes = like_data.get("graphql", {}).get("shortcode_media", {}).get("edge_media_preview_like", {})
+                                if "count" in edge_likes:
+                                    like_count = edge_likes.get("count", 0)
+                                    post_data["like_count"] = like_count
+                        except Exception as e:
+                            print(f"Web like API failed: {e}")
+                    
+                except Exception as e:
+                    print(f"Could not check like status: {e}")
+                    # Non-critical failure, continue
+                    pass
+            
+            # 20% chance to check user info
+            if random.random() < 0.2 and "user" in post_data and "pk" in post_data.get("user", {}):
+                user_id = post_data.get("user", {}).get("pk")
+                if user_id:
+                    print("Checking user profile...")
+                    profile_delay = random.uniform(2, 6)
+                    time.sleep(profile_delay)
+                    
+                    try:
+                        # Try different user info APIs
+                        user_info = None
+                        
+                        # Method 1: Standard API
+                        try:
+                            user_info = self.client.private_request(
+                                f"users/{user_id}/info/", {}
+                            )
+                        except Exception as e:
+                            print(f"User info API failed: {e}")
+                        
+                        # Method 2: Web API by username
+                        if not user_info and "username" in post_data.get("user", {}):
+                            username = post_data.get("user", {}).get("username")
+                            try:
+                                user_info = self.client.public_request(
+                                    f"{username}/",
+                                    params={"__a": "1", "__d": "dis"}
+                                )
+                            except Exception as e:
+                                print(f"Web user API failed: {e}")
+                        
+                        # Update user data if we got info
+                        if user_info:
+                            if "user" in user_info:
+                                # Standard API response
+                                user_data = user_info.get("user", {})
+                                post_data["user"].update({
+                                    "follower_count": user_data.get("follower_count", 0),
+                                    "following_count": user_data.get("following_count", 0),
+                                    "is_business": user_data.get("is_business", False),
+                                    "category": user_data.get("category", "")
+                                })
+                            elif "graphql" in user_info:
+                                # Web API response
+                                user_data = user_info.get("graphql", {}).get("user", {})
+                                post_data["user"].update({
+                                    "follower_count": user_data.get("edge_followed_by", {}).get("count", 0),
+                                    "following_count": user_data.get("edge_follow", {}).get("count", 0),
+                                    "is_business": user_data.get("is_business_account", False),
+                                    "category": user_data.get("category_name", "")
+                                })
+                        
+                    except Exception:
+                        # Non-critical failure, continue
+                        pass
+            
             return post_data
             
         except Exception as e:
             print(f"Error enriching post data: {e}")
-            # Non-critical error, return what we have
+            # Return the original data if enrichment fails
             return post_data
 
     def _ultra_realistic_browsing(self) -> None:
@@ -728,4 +1073,66 @@ class DirectFeedService:
         except Exception as e:
             print(f"Error updating feed file: {e}")
             # Create a recovery file
-            self._create_recovery_file([post]) 
+            self._create_recovery_file([post])
+
+    def _shortcode_to_media_id(self, shortcode: str) -> Optional[str]:
+        """
+        Convert an Instagram shortcode to a media ID.
+        Instagram uses shortcodes in URLs, but some API endpoints need the numeric media ID.
+        """
+        try:
+            # First try using instagrapi's built-in method if available
+            if hasattr(self.client, 'media_pk_from_code'):
+                try:
+                    media_id = self.client.media_pk_from_code(shortcode)
+                    return str(media_id)
+                except Exception as e:
+                    print(f"media_pk_from_code failed: {e}")
+                    
+            # Try to use Instagram web search API
+            try:
+                # Use the oembed endpoint to get media info by shortcode
+                media_info = self.client.private_request(
+                    "oembed/",
+                    params={"url": f"https://www.instagram.com/p/{shortcode}/"}
+                )
+                
+                if media_info and "media_id" in media_info:
+                    return str(media_info["media_id"])
+            except Exception as e:
+                print(f"oembed method failed: {e}")
+            
+            # If nothing else works, try a direct request to get post info
+            try:
+                # Use the alternate API endpoint
+                media_info = self.client.public_request(
+                    f"p/{shortcode}/",
+                    params={"__a": "1", "__d": "dis"}
+                )
+                
+                # Look for media ID in the GraphQL response
+                if media_info and "graphql" in media_info:
+                    if "shortcode_media" in media_info["graphql"]:
+                        return str(media_info["graphql"]["shortcode_media"]["id"])
+            except Exception as e:
+                print(f"web_api method failed: {e}")
+                
+            # Last resort: Try algorithmic conversion 
+            # This is a fallback based on how Instagram historically converted between shortcodes and IDs
+            # Note: This method may not always work as Instagram could change their algorithm
+            try:
+                # Attempt to decode the shortcode using Instagram's Base64 variant
+                alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+                media_id = 0
+                for char in shortcode:
+                    media_id = (media_id * 64) + alphabet.index(char)
+                
+                if media_id > 0:
+                    return str(media_id)
+            except Exception:
+                pass
+                
+            return None
+        except Exception as e:
+            print(f"Failed to convert shortcode {shortcode} to media ID: {e}")
+            return None 

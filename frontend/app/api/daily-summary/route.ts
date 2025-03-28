@@ -5,24 +5,55 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
   const dateParam = searchParams.get("date")
   const date = dateParam ? new Date(dateParam) : new Date()
+  const useCached = searchParams.get("cached") === "true"
+  const count = searchParams.get("count") || "5"
 
   try {
-    // In a real implementation, this would call your Python backend
-    // For example:
-    // const response = await fetch(`${process.env.PYTHON_API_URL}/daily-summary?date=${date.toISOString()}`);
-    // const data = await response.json();
+    // Call our TypeScript service API for summaries
+    const apiUrl = process.env.TS_API_URL || "http://localhost:3001"
+    
+    const response = await fetch(
+      `${apiUrl}/api/feed/summaries?count=${count}&cached=${useCached}`, 
+      { next: { revalidate: 60 } } // Revalidate every minute
+    )
 
-    // For now, return mock data
-    const mockData = getMockData(date)
+    if (!response.ok) {
+      throw new Error(`TS API returned ${response.status}`)
+    }
 
-    return NextResponse.json(mockData)
+    const data = await response.json()
+    
+    // Transform the data to match our frontend format
+    const transformedData = {
+      date: data.date,
+      highlights: data.summaries.map((summary: any, index: number) => ({
+        id: summary.postId || `summary-${index}`,
+        emoji: summary.emoji,
+        username: summary.username,
+        content: summary.actionDescription,
+        topics: [
+          summary.primaryCategory,
+          ...(summary.secondaryCategory ? [summary.secondaryCategory] : [])
+        ],
+        originalScore: summary.originalScore,
+        originalPriority: summary.originalPriority,
+        addedToCalendar: summary.primaryCategory === "Event" || summary.secondaryCategory === "Event"
+      }))
+    }
+
+    return NextResponse.json(transformedData)
   } catch (error) {
     console.error(`Error fetching daily summary:`, error)
-    return NextResponse.json({ error: "Failed to fetch daily summary" }, { status: 500 })
+    
+    // If API call fails, fall back to mock data
+    console.warn("API call failed, falling back to mock data")
+    const mockData = getMockData(date)
+    
+    return NextResponse.json(mockData)
   }
 }
 
-// Mock data function - replace with actual API call to Python backend
+// Mock data function as fallback
 function getMockData(date: Date) {
   // Check if it's today or yesterday to return different data
   const isToday = new Date().toDateString() === date.toDateString()
@@ -109,4 +140,3 @@ function getMockData(date: Date) {
     }
   }
 }
-

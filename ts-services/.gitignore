@@ -1,0 +1,28 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+
+# Data directory
+/data/
+
+# Keep the data directory structure
+!/data/.gitkeep
+!/data/posts/.gitkeep
+!/data/posts/daily/.gitkeep
+!/data/summaries/.gitkeep
+
+# Temp files
+.tmp/
+tmp/
+
+# Editor files
+.vscode/
+.idea/
+
+# API keys and secrets
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
